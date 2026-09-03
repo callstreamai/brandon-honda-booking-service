@@ -699,8 +699,8 @@ export default async ({ page }) => {
       return { url: location.href, title: document.title, text: compact(document.body?.innerText || '').slice(0, 2500), fields, buttons };
     });
   }
-  async function clickText(frame, patternText) {
-    return frame.evaluate((patternText) => {
+  async function clickText(frame, patternText, pick = 'shortest') {
+    return frame.evaluate(({ patternText, pick }) => {
       const re = new RegExp(patternText, 'i');
       const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, div, span, p, h1, h2, h3, h4, [tabindex]'));
       const matches = els.map(el => {
@@ -713,13 +713,15 @@ export default async ({ page }) => {
       }).filter(item => item.text && re.test(item.text));
       const enabledMatches = matches.filter(item => !item.disabled);
       const visibleEnabled = enabledMatches.filter(item => item.visible);
-      const pool = (visibleEnabled.length ? visibleEnabled : enabledMatches.length ? enabledMatches : matches).sort((a, b) => a.score - b.score);
+      let pool = visibleEnabled.length ? visibleEnabled : enabledMatches.length ? enabledMatches : matches;
+      if (pick === 'last') pool = pool.slice().reverse();
+      else if (pick === 'shortest') pool = pool.slice().sort((a, b) => a.score - b.score);
       const targetInfo = pool[0];
-      if (!targetInfo) return { ok: false, type: 'clickText', patternText };
+      if (!targetInfo) return { ok: false, type: 'clickText', patternText, pick };
       targetInfo.el.scrollIntoView({ block: 'center', inline: 'center' });
       targetInfo.el.click();
-      return { ok: true, type: 'clickText', patternText, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedTextLength: targetInfo.score };
-    }, patternText);
+      return { ok: true, type: 'clickText', patternText, pick, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedTextLength: targetInfo.score };
+    }, { patternText, pick });
   }
   async function clickSelector(frame, selector, index = 0) {
     return frame.evaluate(({ selector, index }) => {
@@ -755,7 +757,7 @@ export default async ({ page }) => {
       const action = typeof step === 'string' ? { type: 'clickText', pattern: step } : step;
       let result;
       for (let attempt = 0; attempt < 6; attempt++) {
-        if (action.type === 'clickText') result = await clickText(frame, action.pattern);
+        if (action.type === 'clickText') result = await clickText(frame, action.pattern, action.pick || 'shortest');
         else if (action.type === 'fill') result = await fill(frame, action.selector, action.value);
         else if (action.type === 'clickSelector') result = await clickSelector(frame, action.selector, action.index || 0);
         else result = { ok: false, reason: 'unknown_action', action };
