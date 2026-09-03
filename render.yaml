@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: brandon-honda-booking-service
+    runtime: node
+    plan: starter
+    region: ohio
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: BOOKING_MODE
+        value: safe
+      - key: WEBHOOK_SECRET
+        generateValue: true
