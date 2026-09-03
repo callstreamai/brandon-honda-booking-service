@@ -853,18 +853,17 @@ function nearestDemoSlots(preferredDate) {
 
 async function bookWithPortal(input) {
   if (MODE !== 'live') {
-    const confirmation = makeConfirmation(input.call_id);
     const probe = await runBrowserlessProbe({ url: input.scheduler_url || SCHEDULER_URL });
     return {
-      success: Boolean(probe.ok),
-      status: probe.ok ? 'safe_mode_portal_validated' : 'safe_mode_portal_probe_failed',
-      confirmation_number: probe.ok ? confirmation : null,
-      date: input.preferred_date,
-      time: normalizeTime(input.preferred_time),
+      success: false,
+      status: probe.ok ? 'safe_mode_no_booking' : 'safe_mode_portal_probe_failed',
+      confirmation_number: null,
+      date: null,
+      time: null,
       message: probe.ok
-        ? `Safe-mode demo confirmation for ${DEALER_NAME}. Browserless validated the Reynolds scheduling portal, but live final submission remains disabled.`
-        : `Safe-mode could not validate the Reynolds scheduling portal for ${DEALER_NAME}. Transfer caller to the service team.`,
-      available_slots: probe.ok ? nearestDemoSlots(input.preferred_date) : [],
+        ? `Safe mode is enabled. Browserless validated the ${DEALER_NAME} Reynolds scheduling portal, but no appointment was created. Transfer caller to the service team or enable live mode after final submit is validated.`
+        : `Safe mode could not validate the Reynolds scheduling portal for ${DEALER_NAME}. Transfer caller to the service team.`,
+      available_slots: [],
       proof_url: null,
       dealer: DEALER_NAME,
       address: DEALER_ADDRESS,
