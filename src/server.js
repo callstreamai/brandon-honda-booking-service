@@ -73,7 +73,7 @@ export default async ({ page, context }) => {
   };
   try {
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-    await page.waitForTimeout(3000);
+    await new Promise(resolve => setTimeout(resolve, 3000));
     await page.evaluate(async () => {
       await new Promise(resolve => {
         let total = 0;
@@ -87,7 +87,7 @@ export default async ({ page, context }) => {
         }, 250);
       });
     });
-    await page.waitForTimeout(1500);
+    await new Promise(resolve => setTimeout(resolve, 1500));
     const data = await page.evaluate(() => {
       const text = document.body.innerText || '';
       const lower = text.toLowerCase();
