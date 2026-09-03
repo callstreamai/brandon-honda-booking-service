@@ -308,6 +308,116 @@ export default async ({ page, context }) => {
   return parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
 }
 
+async function runSafeFlowSteps(context = {}) {
+  if (!BROWSERLESS_API_KEY) {
+    return { ok: false, status: 'browserless_not_configured', message: 'BROWSERLESS_API_KEY is not configured on the service.' };
+  }
+  const steps = Array.isArray(context.steps) ? context.steps.slice(0, 12) : [];
+  const forbidden = /\b(book|confirm|submit|finalize|place appointment|complete appointment|schedule it|reserve)\b/i;
+  const blockedStep = steps.find(step => forbidden.test(String(step || '')));
+  if (blockedStep) {
+    return { ok: false, status: 'blocked_unsafe_step', message: 'Requested step may submit or confirm an appointment.', blockedStep };
+  }
+
+  const endpoint = `https://${BROWSERLESS_REGION}/function?token=${encodeURIComponent(BROWSERLESS_API_KEY)}`;
+  const code = `
+export default async ({ page, context }) => {
+  const targetUrl = context.url;
+  const steps = context.steps || [];
+  const snapshots = [];
+  async function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+  async function getFrame() { return page.frames().find(frame => /reyrey\\.net|service-portal/i.test(frame.url())); }
+  async function snapshot(name, frame) {
+    let frameData = null;
+    if (frame) {
+      try {
+        frameData = await frame.evaluate(() => {
+          const visible = el => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style && style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+          };
+          const fields = Array.from(document.querySelectorAll('input, select, textarea')).map((el, index) => ({
+            index,
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || '',
+            name: el.getAttribute('name') || '',
+            id: el.id || '',
+            placeholder: el.getAttribute('placeholder') || '',
+            ariaLabel: el.getAttribute('aria-label') || '',
+            value: el.value || '',
+            visible: visible(el)
+          })).slice(0, 120);
+          const buttons = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]')).map((el, index) => ({
+            index,
+            text: (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' '),
+            tag: el.tagName.toLowerCase(),
+            id: el.id || '',
+            className: String(el.className || '').slice(0, 180),
+            href: el.href || '',
+            visible: visible(el)
+          })).filter(b => b.text || b.href).slice(0, 180);
+          return {
+            url: location.href,
+            title: document.title,
+            textSample: (document.body?.innerText || '').replace(/\\s+/g, ' ').slice(0, 3500),
+            fields,
+            buttons,
+            labels: Array.from(document.querySelectorAll('label')).map(el => (el.innerText || '').trim()).filter(Boolean).slice(0, 120)
+          };
+        });
+      } catch (err) { frameData = { url: frame.url(), error: err && err.message ? err.message : String(err) }; }
+    }
+    snapshots.push({ name, frame: frameData });
+  }
+  async function clickByText(frame, patternText) {
+    return frame.evaluate((patternText) => {
+      const re = new RegExp(patternText, 'i');
+      const elements = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]'));
+      const target = elements.find(el => {
+        const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ');
+        if (!text || !re.test(text)) return false;
+        const style = window.getComputedStyle(el);
+        return style && style.display !== 'none' && style.visibility !== 'hidden';
+      });
+      if (!target) return { clicked: false, patternText };
+      const text = (target.innerText || target.textContent || target.value || target.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ');
+      target.click();
+      return { clicked: true, patternText, text };
+    }, patternText);
+  }
+  try {
+    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await delay(3000);
+    let frame = await getFrame();
+    await snapshot('loaded', frame);
+    if (!frame) return { data: { ok: false, status: 'reynolds_frame_not_found', snapshots }, type: 'application/json' };
+    const clicks = [];
+    for (const step of steps) {
+      const clicked = await clickByText(frame, step);
+      clicks.push(clicked);
+      await delay(2500);
+      frame = await getFrame();
+      await snapshot('after_' + step.replace(/[^a-z0-9]+/gi, '_').slice(0, 40), frame);
+      if (!clicked.clicked) break;
+    }
+    return { data: { ok: true, status: 'mapped_steps', clicks, snapshots }, type: 'application/json' };
+  } catch (err) {
+    return { data: { ok: false, status: 'exception', error: err && err.message ? err.message : String(err), snapshots }, type: 'application/json' };
+  }
+};`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Cache-Control': 'no-cache', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, context: { url: context.url || SCHEDULER_URL, steps } })
+  });
+  const text = await response.text();
+  let parsed;
+  try { parsed = JSON.parse(text); } catch (_err) { parsed = { raw: text.slice(0, 4000) }; }
+  if (!response.ok) return { ok: false, status: 'browserless_error', http_status: response.status, details: parsed };
+  return parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+}
+
 const inMemoryBookings = new Map();
 
 function requireAuth(req, res, next) {
@@ -482,6 +592,11 @@ app.get('/validate-process', async (_req, res) => {
 app.get('/map-guest-flow', async (_req, res) => {
   const result = await runGuestFlowMap({ url: SCHEDULER_URL });
   res.status(result.ok ? 200 : 502).json(result);
+});
+
+app.post('/map-flow', async (req, res) => {
+  const result = await runSafeFlowSteps({ url: SCHEDULER_URL, steps: req.body?.steps || [] });
+  res.status(result.ok ? 200 : 400).json(result);
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
