@@ -702,23 +702,23 @@ export default async ({ page }) => {
   async function clickText(frame, patternText) {
     return frame.evaluate((patternText) => {
       const re = new RegExp(patternText, 'i');
-      const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]'));
+      const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, div, span, p, h1, h2, h3, h4, [tabindex]'));
       const matches = els.map(el => {
         const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
         const disabled = Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
         const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-        return { el, text, disabled, visible };
+        return { el, text, disabled, visible, score: text.length };
       }).filter(item => item.text && re.test(item.text));
       const enabledMatches = matches.filter(item => !item.disabled);
       const visibleEnabled = enabledMatches.filter(item => item.visible);
-      const pool = visibleEnabled.length ? visibleEnabled : enabledMatches.length ? enabledMatches : matches;
-      const targetInfo = pool[pool.length - 1];
+      const pool = (visibleEnabled.length ? visibleEnabled : enabledMatches.length ? enabledMatches : matches).sort((a, b) => a.score - b.score);
+      const targetInfo = pool[0];
       if (!targetInfo) return { ok: false, type: 'clickText', patternText };
       targetInfo.el.scrollIntoView({ block: 'center', inline: 'center' });
       targetInfo.el.click();
-      return { ok: true, type: 'clickText', patternText, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedOccurrence: pool.length - 1 };
+      return { ok: true, type: 'clickText', patternText, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedTextLength: targetInfo.score };
     }, patternText);
   }
   async function clickSelector(frame, selector, index = 0) {
