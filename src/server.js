@@ -121,6 +121,28 @@ export default async ({ page, context }) => {
           };
         });
         data.reynoldsFrame = frameData;
+        const clickedStart = await reynoldsFrame.evaluate(() => {
+          const elements = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+          const target = elements.find(el => /schedule appointment/i.test((el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim()));
+          if (!target) return false;
+          target.click();
+          return true;
+        });
+        data.reynoldsStartClicked = clickedStart;
+        if (clickedStart) {
+          await new Promise(resolve => setTimeout(resolve, 2500));
+          data.reynoldsAfterStart = await reynoldsFrame.evaluate(() => {
+            const text = document.body?.innerText || '';
+            return {
+              url: location.href,
+              title: document.title,
+              textSample: text.slice(0, 2500),
+              inputCount: document.querySelectorAll('input, select, textarea').length,
+              buttonTexts: Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a')).map(el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim()).filter(Boolean).slice(0, 80),
+              labels: Array.from(document.querySelectorAll('label')).map(el => (el.innerText || '').trim()).filter(Boolean).slice(0, 80)
+            };
+          });
+        }
       } catch (frameErr) {
         data.reynoldsFrame = { url: reynoldsFrame.url(), error: frameErr && frameErr.message ? frameErr.message : String(frameErr) };
       }
@@ -248,7 +270,8 @@ async function bookWithPortal(input) {
       hasSchedulerCopy: Boolean(probe.hasSchedulerCopy),
       hasAppointmentCopy: Boolean(probe.hasAppointmentCopy),
       hasReynoldsFrame: Boolean(probe.reynoldsFrame),
-      reynoldsFrameUrl: probe.reynoldsFrame?.url || null
+      reynoldsFrameUrl: probe.reynoldsFrame?.url || null,
+      reynoldsStartClicked: Boolean(probe.reynoldsStartClicked)
     },
     live_submit_enabled: ALLOW_LIVE_SUBMIT
   };
@@ -299,6 +322,38 @@ app.get('/portal-probe', async (_req, res) => {
 app.post('/portal-probe', requireAuth, async (req, res) => {
   const probe = await runBrowserlessProbe({ url: req.body?.url || SCHEDULER_URL });
   res.status(probe.ok ? 200 : 502).json(probe);
+});
+
+app.get('/validate-process', async (_req, res) => {
+  const probe = await runBrowserlessProbe({ url: SCHEDULER_URL });
+  const sampleBooking = await bookWithPortal({
+    call_id: 'validation-call',
+    preferred_date: '09/05/2026',
+    preferred_time: '09:30',
+    scheduler_url: SCHEDULER_URL
+  });
+  res.status(probe.ok ? 200 : 502).json({
+    ok: Boolean(probe.ok),
+    mode: MODE,
+    browserlessConfigured: Boolean(BROWSERLESS_API_KEY),
+    liveSubmitEnabled: ALLOW_LIVE_SUBMIT,
+    portal: {
+      reachedOuterPage: Boolean(probe.ok),
+      title: probe.title || null,
+      iframeCount: probe.iframeCount || 0,
+      reynoldsFrameUrl: probe.reynoldsFrame?.url || null,
+      reynoldsFrameTitle: probe.reynoldsFrame?.title || null,
+      reynoldsStartClicked: Boolean(probe.reynoldsStartClicked),
+      afterStartTextSample: probe.reynoldsAfterStart?.textSample?.slice(0, 1000) || null
+    },
+    bookingDryRun: {
+      success: sampleBooking.success,
+      status: sampleBooking.status,
+      message: sampleBooking.message,
+      confirmation_number: sampleBooking.confirmation_number,
+      live_submit_enabled: sampleBooking.live_submit_enabled ?? ALLOW_LIVE_SUBMIT
+    }
+  });
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
