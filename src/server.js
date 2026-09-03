@@ -702,14 +702,18 @@ export default async ({ page }) => {
   async function clickText(frame, patternText, pick = 'shortest') {
     return frame.evaluate(({ patternText, pick }) => {
       const re = new RegExp(patternText, 'i');
-      const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, div, span, p, h1, h2, h3, h4, [tabindex]'));
-      const matches = els.map(el => {
+      const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, div, span, p, h1, h2, h3, h4, [tabindex]'));
+      const matches = candidates.map(el => {
         const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        const disabled = Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
+        const clickable = el.matches('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]')
+          ? el
+          : el.closest('button, a, [role="button"], li, label, [tabindex]');
+        const clickText = clickable ? (clickable.innerText || clickable.textContent || clickable.value || clickable.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim() : text;
+        const style = clickable ? window.getComputedStyle(clickable) : window.getComputedStyle(el);
+        const rect = clickable ? clickable.getBoundingClientRect() : el.getBoundingClientRect();
+        const disabled = Boolean(clickable?.disabled) || /disabled/i.test(String(clickable?.className || '')) || clickable?.getAttribute('aria-disabled') === 'true';
         const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-        return { el, text, disabled, visible, score: text.length };
+        return { el: clickable || el, text, clickText, disabled, visible, score: text.length };
       }).filter(item => item.text && re.test(item.text));
       const enabledMatches = matches.filter(item => !item.disabled);
       const visibleEnabled = enabledMatches.filter(item => item.visible);
@@ -720,7 +724,7 @@ export default async ({ page }) => {
       if (!targetInfo) return { ok: false, type: 'clickText', patternText, pick };
       targetInfo.el.scrollIntoView({ block: 'center', inline: 'center' });
       targetInfo.el.click();
-      return { ok: true, type: 'clickText', patternText, pick, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedTextLength: targetInfo.score };
+      return { ok: true, type: 'clickText', patternText, pick, text: targetInfo.text, clickedText: targetInfo.clickText, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedTextLength: targetInfo.score };
     }, { patternText, pick });
   }
   async function clickSelector(frame, selector, index = 0) {
