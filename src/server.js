@@ -703,11 +703,19 @@ export default async ({ page }) => {
     return frame.evaluate((patternText) => {
       const re = new RegExp(patternText, 'i');
       const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]'));
-      const target = els.find(el => re.test((el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim()));
-      if (!target) return { ok: false, type: 'clickText', patternText };
-      const text = (target.innerText || target.textContent || target.value || target.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
-      target.scrollIntoView({ block: 'center', inline: 'center' }); target.click();
-      return { ok: true, type: 'clickText', patternText, text };
+      const matches = els.map(el => {
+        const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        const disabled = Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
+        const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        return { el, text, disabled, visible };
+      }).filter(item => item.text && re.test(item.text));
+      const targetInfo = matches.find(item => item.visible && !item.disabled) || matches.find(item => !item.disabled) || matches[matches.length - 1];
+      if (!targetInfo) return { ok: false, type: 'clickText', patternText };
+      targetInfo.el.scrollIntoView({ block: 'center', inline: 'center' });
+      targetInfo.el.click();
+      return { ok: true, type: 'clickText', patternText, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length };
     }, patternText);
   }
   async function clickSelector(frame, selector) {
