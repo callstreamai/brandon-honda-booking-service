@@ -185,6 +185,129 @@ export default async ({ page, context }) => {
   return payload;
 }
 
+async function runGuestFlowMap(context = {}) {
+  if (!BROWSERLESS_API_KEY) {
+    return { ok: false, status: 'browserless_not_configured', message: 'BROWSERLESS_API_KEY is not configured on the service.' };
+  }
+
+  const endpoint = `https://${BROWSERLESS_REGION}/function?token=${encodeURIComponent(BROWSERLESS_API_KEY)}`;
+  const code = `
+export default async ({ page, context }) => {
+  const targetUrl = context.url;
+  const snapshots = [];
+
+  async function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function getFrame() {
+    return page.frames().find(frame => /reyrey\\.net|service-portal/i.test(frame.url()));
+  }
+
+  async function snapshot(name, frame) {
+    const pageData = await page.evaluate(() => ({
+      url: location.href,
+      title: document.title,
+      textSample: (document.body?.innerText || '').slice(0, 1200),
+      iframeSources: Array.from(document.querySelectorAll('iframe')).map(f => f.src).filter(Boolean).slice(0, 20)
+    }));
+    let frameData = null;
+    if (frame) {
+      try {
+        frameData = await frame.evaluate(() => {
+          const visible = el => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style && style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+          };
+          const fields = Array.from(document.querySelectorAll('input, select, textarea')).map((el, index) => ({
+            index,
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || '',
+            name: el.getAttribute('name') || '',
+            id: el.id || '',
+            placeholder: el.getAttribute('placeholder') || '',
+            ariaLabel: el.getAttribute('aria-label') || '',
+            value: el.value || '',
+            visible: visible(el)
+          })).slice(0, 80);
+          const buttons = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')).map((el, index) => ({
+            index,
+            text: (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').trim(),
+            tag: el.tagName.toLowerCase(),
+            id: el.id || '',
+            className: String(el.className || '').slice(0, 160),
+            href: el.href || '',
+            visible: visible(el)
+          })).filter(b => b.text || b.href).slice(0, 120);
+          return {
+            url: location.href,
+            title: document.title,
+            textSample: (document.body?.innerText || '').slice(0, 3000),
+            fields,
+            buttons,
+            labels: Array.from(document.querySelectorAll('label')).map(el => (el.innerText || '').trim()).filter(Boolean).slice(0, 100)
+          };
+        });
+      } catch (err) {
+        frameData = { url: frame.url(), error: err && err.message ? err.message : String(err) };
+      }
+    }
+    snapshots.push({ name, page: pageData, frame: frameData });
+  }
+
+  async function clickByText(frame, patterns) {
+    return frame.evaluate((patterns) => {
+      const regexes = patterns.map(p => new RegExp(p, 'i'));
+      const elements = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]'));
+      const target = elements.find(el => {
+        const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').trim();
+        return regexes.some(r => r.test(text));
+      });
+      if (!target) return { clicked: false };
+      const text = (target.innerText || target.textContent || target.value || target.getAttribute('aria-label') || '').trim();
+      target.click();
+      return { clicked: true, text };
+    }, patterns);
+  }
+
+  try {
+    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await delay(3000);
+    let frame = await getFrame();
+    await snapshot('loaded', frame);
+    if (!frame) return { data: { ok: false, status: 'reynolds_frame_not_found', snapshots }, type: 'application/json' };
+
+    const scheduleClick = await clickByText(frame, ['schedule appointment']);
+    await delay(2500);
+    frame = await getFrame();
+    await snapshot('after_schedule_appointment', frame);
+
+    const guestClick = await clickByText(frame, ["i.?m new", 'continue as guest', 'guest']);
+    await delay(2500);
+    frame = await getFrame();
+    await snapshot('after_guest_entry', frame);
+
+    return { data: { ok: true, status: 'mapped_guest_entry', scheduleClick, guestClick, snapshots }, type: 'application/json' };
+  } catch (err) {
+    return { data: { ok: false, status: 'exception', error: err && err.message ? err.message : String(err), snapshots }, type: 'application/json' };
+  }
+};`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Cache-Control': 'no-cache', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, context: { url: context.url || SCHEDULER_URL } })
+  });
+  const text = await response.text();
+  let parsed;
+  try { parsed = JSON.parse(text); } catch (_err) { parsed = { raw: text.slice(0, 4000) }; }
+  if (!response.ok) {
+    return { ok: false, status: 'browserless_error', http_status: response.status, message: 'Browserless guest flow map failed.', details: parsed };
+  }
+  return parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+}
+
 const inMemoryBookings = new Map();
 
 function requireAuth(req, res, next) {
@@ -354,6 +477,11 @@ app.get('/validate-process', async (_req, res) => {
       live_submit_enabled: sampleBooking.live_submit_enabled ?? ALLOW_LIVE_SUBMIT
     }
   });
+});
+
+app.get('/map-guest-flow', async (_req, res) => {
+  const result = await runGuestFlowMap({ url: SCHEDULER_URL });
+  res.status(result.ok ? 200 : 502).json(result);
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
