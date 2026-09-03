@@ -466,6 +466,109 @@ export default async ({ page, context }) => {
   return parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
 }
 
+async function runMvpDryRun(context = {}) {
+  if (!BROWSERLESS_API_KEY) {
+    return { ok: false, status: 'browserless_not_configured', message: 'BROWSERLESS_API_KEY is not configured on the service.' };
+  }
+  const input = {
+    year: String(context.vehicle_year || '2023'),
+    model: String(context.vehicle_model || 'CR-V'),
+    mileage: String(context.vehicle_mileage || '32000'),
+    servicePattern: String(context.service_pattern || 'Oil|Maintenance|Other'),
+    transportPattern: String(context.transport_pattern || 'Wait|Drop')
+  };
+  const endpoint = `https://${BROWSERLESS_REGION}/function?token=${encodeURIComponent(BROWSERLESS_API_KEY)}`;
+  const code = `
+export default async ({ page, context }) => {
+  const snapshots = [];
+  async function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+  async function getFrame() { return page.frames().find(frame => /reyrey\\.net|service-portal/i.test(frame.url())); }
+  async function state(name, frame) {
+    if (!frame) { snapshots.push({ name, error: 'no_frame' }); return; }
+    const data = await frame.evaluate(() => {
+      const compact = s => (s || '').replace(/\\s+/g, ' ').trim();
+      const elements = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]'));
+      const buttons = elements.map((el, index) => ({
+        index,
+        text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''),
+        tag: el.tagName.toLowerCase(),
+        id: el.id || '',
+        disabled: Boolean(el.disabled) || /disabled/i.test(String(el.className || ''))
+      })).filter(b => b.text).slice(0, 80);
+      const fields = Array.from(document.querySelectorAll('input, select, textarea')).map((el, index) => ({
+        index,
+        tag: el.tagName.toLowerCase(),
+        type: el.getAttribute('type') || '',
+        id: el.id || '',
+        name: el.getAttribute('name') || '',
+        placeholder: el.getAttribute('placeholder') || '',
+        value: el.value || ''
+      })).slice(0, 40);
+      return { url: location.href, title: document.title, text: compact(document.body?.innerText || '').slice(0, 1800), buttons, fields };
+    });
+    snapshots.push({ name, ...data });
+  }
+  async function clickText(frame, patternText) {
+    return frame.evaluate((patternText) => {
+      const re = new RegExp(patternText, 'i');
+      const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]'));
+      const target = els.find(el => re.test((el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim()));
+      if (!target) return { ok: false, action: 'clickText', patternText };
+      const text = (target.innerText || target.textContent || target.value || el.getAttribute?.('aria-label') || '').replace(/\\s+/g, ' ').trim();
+      target.scrollIntoView({ block: 'center', inline: 'center' });
+      target.click();
+      return { ok: true, action: 'clickText', patternText, text };
+    }, patternText);
+  }
+  async function fill(selector, value) {
+    try {
+      await page.keyboard.press('Tab');
+    } catch (_) {}
+    const frame = await getFrame();
+    try {
+      await frame.click(selector, { clickCount: 3 });
+      await page.keyboard.type(String(value), { delay: 30 });
+    } catch (_) {}
+    return frame.evaluate(({ selector, value }) => {
+      const el = document.querySelector(selector);
+      if (!el) return { ok: false, action: 'fill', selector, reason: 'not_found' };
+      const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && descriptor.set) descriptor.set.call(el, String(value)); else el.value = String(value);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(value) }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: '0' }));
+      return { ok: true, action: 'fill', selector, value: String(value), currentValue: el.value };
+    }, { selector, value });
+  }
+  try {
+    await page.goto(context.url, { waitUntil: 'networkidle2', timeout: 60000 });
+    await delay(2500);
+    let frame = await getFrame();
+    await state('loaded', frame);
+    const results = [];
+    for (const pattern of ['Schedule Appointment', "I'm new", '^Honda$', '^' + context.year + '$', '^' + context.model + '$']) {
+      const r = await clickText(frame, pattern); results.push(r); await delay(1500); frame = await getFrame(); await state('after_' + pattern.replace(/[^a-z0-9]+/gi, '_'), frame); if (!r.ok) return { data: { ok: false, status: 'step_failed', results, snapshots }, type: 'application/json' };
+    }
+    const fillResult = await fill('#estMileageText_input', context.mileage); results.push(fillResult); await delay(1500); frame = await getFrame(); await state('after_mileage', frame);
+    const proceed = await clickText(frame, '^Proceed$'); results.push(proceed); await delay(3000); frame = await getFrame(); await state('after_vehicle_proceed', frame);
+    return { data: { ok: true, status: 'mvp_dry_run_vehicle_complete', results, snapshots }, type: 'application/json' };
+  } catch (err) {
+    return { data: { ok: false, status: 'exception', error: err && err.message ? err.message : String(err), snapshots }, type: 'application/json' };
+  }
+};`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Cache-Control': 'no-cache', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, context: { url: SCHEDULER_URL, ...input } })
+  });
+  const text = await response.text();
+  let parsed;
+  try { parsed = JSON.parse(text); } catch (_err) { parsed = { raw: text.slice(0, 4000) }; }
+  if (!response.ok) return { ok: false, status: 'browserless_error', http_status: response.status, details: parsed };
+  return parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+}
+
 const inMemoryBookings = new Map();
 
 function requireAuth(req, res, next) {
@@ -645,6 +748,11 @@ app.get('/map-guest-flow', async (_req, res) => {
 app.post('/map-flow', async (req, res) => {
   const result = await runSafeFlowSteps({ url: SCHEDULER_URL, steps: req.body?.steps || [] });
   res.status(result.ok ? 200 : 400).json(result);
+});
+
+app.post('/mvp-dry-run', async (req, res) => {
+  const result = await runMvpDryRun(req.body || {});
+  res.status(result.ok ? 200 : 502).json(result);
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
