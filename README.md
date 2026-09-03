@@ -33,3 +33,5 @@ The initial deployment runs in `BOOKING_MODE=safe`, returning explicit simulated
 ## Live driver validation
 
 The app includes a Browserless-backed `/portal-probe` endpoint that renders the Brandon Honda scheduling page and returns structured validation signals. In `BOOKING_MODE=live`, `/book-service` runs this probe and fails closed with `success: false` until final Reynolds submission is explicitly implemented and `ALLOW_LIVE_SUBMIT=true` is set.
+
+- `GET /map-guest-flow`: safe Browserless dry-run mapper that clicks Schedule Appointment and guest entry, then returns screen state. It does not submit appointments.
