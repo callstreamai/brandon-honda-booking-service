@@ -754,10 +754,15 @@ export default async ({ page }) => {
     for (const step of steps) {
       const action = typeof step === 'string' ? { type: 'clickText', pattern: step } : step;
       let result;
-      if (action.type === 'clickText') result = await clickText(frame, action.pattern);
-      else if (action.type === 'fill') result = await fill(frame, action.selector, action.value);
-      else if (action.type === 'clickSelector') result = await clickSelector(frame, action.selector, action.index || 0);
-      else result = { ok: false, reason: 'unknown_action', action };
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (action.type === 'clickText') result = await clickText(frame, action.pattern);
+        else if (action.type === 'fill') result = await fill(frame, action.selector, action.value);
+        else if (action.type === 'clickSelector') result = await clickSelector(frame, action.selector, action.index || 0);
+        else result = { ok: false, reason: 'unknown_action', action };
+        if (result.ok !== false) break;
+        await delay(1000);
+        frame = await getFrame();
+      }
       results.push({ action, result });
       await delay(action.waitMs || 1400);
       frame = await getFrame();
