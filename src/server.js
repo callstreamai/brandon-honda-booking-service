@@ -569,6 +569,106 @@ export default async ({ page, context }) => {
   return parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
 }
 
+async function runFinalStateMap(context = {}) {
+  if (!BROWSERLESS_API_KEY) {
+    return { ok: false, status: 'browserless_not_configured', message: 'BROWSERLESS_API_KEY is not configured on the service.' };
+  }
+  const steps = Array.isArray(context.steps) ? context.steps.slice(0, 15) : [];
+  const forbidden = /\b(book|confirm|submit|finalize|place appointment|complete appointment|schedule it|reserve)\b/i;
+  const blockedStep = steps.find(step => forbidden.test(typeof step === 'string' ? step : `${step?.pattern || ''} ${step?.selector || ''}`));
+  if (blockedStep) return { ok: false, status: 'blocked_unsafe_step', blockedStep };
+
+  const endpoint = `https://${BROWSERLESS_REGION}/function?token=${encodeURIComponent(BROWSERLESS_API_KEY)}`;
+  const code = `
+export default async ({ page, context }) => {
+  const targetUrl = context.url;
+  const steps = context.steps || [];
+  async function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+  async function getFrame() { return page.frames().find(frame => /reyrey\\.net|service-portal/i.test(frame.url())); }
+  async function compactState(frame) {
+    if (!frame) return { error: 'no_frame' };
+    return frame.evaluate(() => {
+      const compact = s => (s || '').replace(/\\s+/g, ' ').trim();
+      const elements = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]'));
+      const buttons = elements.map((el, index) => ({
+        index,
+        text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''),
+        tag: el.tagName.toLowerCase(),
+        id: el.id || '',
+        disabled: Boolean(el.disabled) || /disabled/i.test(String(el.className || ''))
+      })).filter(b => b.text).slice(0, 120);
+      const fields = Array.from(document.querySelectorAll('input, select, textarea')).map((el, index) => ({
+        index,
+        tag: el.tagName.toLowerCase(),
+        type: el.getAttribute('type') || '',
+        id: el.id || '',
+        name: el.getAttribute('name') || '',
+        placeholder: el.getAttribute('placeholder') || '',
+        value: el.value || '',
+        checked: Boolean(el.checked)
+      })).slice(0, 60);
+      return { url: location.href, title: document.title, text: compact(document.body?.innerText || '').slice(0, 2500), fields, buttons };
+    });
+  }
+  async function clickText(frame, patternText) {
+    return frame.evaluate((patternText) => {
+      const re = new RegExp(patternText, 'i');
+      const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]'));
+      const target = els.find(el => re.test((el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim()));
+      if (!target) return { ok: false, action: 'clickText', patternText };
+      const text = (target.innerText || target.textContent || target.value || target.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
+      target.scrollIntoView({ block: 'center', inline: 'center' }); target.click();
+      return { ok: true, action: 'clickText', patternText, text };
+    }, patternText);
+  }
+  async function fill(frame, selector, value) {
+    try { await frame.click(selector, { clickCount: 3 }); await page.keyboard.type(String(value), { delay: 20 }); } catch (_) {}
+    return frame.evaluate(({ selector, value }) => {
+      const el = document.querySelector(selector);
+      if (!el) return { ok: false, action: 'fill', selector, reason: 'not_found' };
+      const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && descriptor.set) descriptor.set.call(el, String(value)); else el.value = String(value);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(value) }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: String(value).slice(-1) || '0' }));
+      return { ok: true, action: 'fill', selector, value: String(value), currentValue: el.value };
+    }, { selector, value });
+  }
+  try {
+    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await delay(2500);
+    let frame = await getFrame();
+    const results = [];
+    for (const step of steps) {
+      const action = typeof step === 'string' ? { type: 'clickText', pattern: step } : step;
+      let result;
+      if (action.type === 'clickText') result = await clickText(frame, action.pattern);
+      else if (action.type === 'fill') result = await fill(frame, action.selector, action.value);
+      else result = { ok: false, reason: 'unknown_action', action };
+      results.push({ action, result });
+      await delay(action.waitMs || 1800);
+      frame = await getFrame();
+      if (result.ok === false) break;
+    }
+    const finalState = await compactState(frame);
+    return { data: { ok: true, status: 'final_state_mapped', results, finalState }, type: 'application/json' };
+  } catch (err) {
+    return { data: { ok: false, status: 'exception', error: err && err.message ? err.message : String(err) }, type: 'application/json' };
+  }
+};`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Cache-Control': 'no-cache', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, context: { url: SCHEDULER_URL, steps } })
+  });
+  const text = await response.text();
+  let parsed;
+  try { parsed = JSON.parse(text); } catch (_err) { parsed = { raw: text.slice(0, 4000) }; }
+  if (!response.ok) return { ok: false, status: 'browserless_error', http_status: response.status, details: parsed };
+  return parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+}
+
 const inMemoryBookings = new Map();
 
 function requireAuth(req, res, next) {
@@ -753,6 +853,11 @@ app.post('/map-flow', async (req, res) => {
 app.post('/mvp-dry-run', async (req, res) => {
   const result = await runMvpDryRun(req.body || {});
   res.status(result.ok ? 200 : 502).json(result);
+});
+
+app.post('/map-final-state', async (req, res) => {
+  const result = await runFinalStateMap(req.body || {});
+  res.status(result.ok ? 200 : 400).json(result);
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
