@@ -702,18 +702,14 @@ export default async ({ page }) => {
   async function clickText(frame, patternText, pick = 'shortest') {
     return frame.evaluate(({ patternText, pick }) => {
       const re = new RegExp(patternText, 'i');
-      const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, div, span, p, h1, h2, h3, h4, [tabindex]'));
+      const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]'));
       const matches = candidates.map(el => {
         const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
-        const clickable = el.matches('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]')
-          ? el
-          : el.closest('button, a, [role="button"], li, label, [tabindex]');
-        const clickText = clickable ? (clickable.innerText || clickable.textContent || clickable.value || clickable.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim() : text;
-        const style = clickable ? window.getComputedStyle(clickable) : window.getComputedStyle(el);
-        const rect = clickable ? clickable.getBoundingClientRect() : el.getBoundingClientRect();
-        const disabled = Boolean(clickable?.disabled) || /disabled/i.test(String(clickable?.className || '')) || clickable?.getAttribute('aria-disabled') === 'true';
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        const disabled = Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
         const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-        return { el: clickable || el, text, clickText, disabled, visible, score: text.length };
+        return { el, text, disabled, visible, score: text.length };
       }).filter(item => item.text && re.test(item.text));
       const enabledMatches = matches.filter(item => !item.disabled);
       const visibleEnabled = enabledMatches.filter(item => item.visible);
@@ -724,8 +720,29 @@ export default async ({ page }) => {
       if (!targetInfo) return { ok: false, type: 'clickText', patternText, pick };
       targetInfo.el.scrollIntoView({ block: 'center', inline: 'center' });
       targetInfo.el.click();
-      return { ok: true, type: 'clickText', patternText, pick, text: targetInfo.text, clickedText: targetInfo.clickText, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedTextLength: targetInfo.score };
+      return { ok: true, type: 'clickText', patternText, pick, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedTextLength: targetInfo.score };
     }, { patternText, pick });
+  }
+  async function clickNearbyInput(frame, patternText, inputType = 'checkbox') {
+    return frame.evaluate(({ patternText, inputType }) => {
+      const re = new RegExp(patternText, 'i');
+      const textEls = Array.from(document.querySelectorAll('div, span, p, label, button, li'))
+        .map(el => ({ el, text: (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim() }))
+        .filter(item => item.text && re.test(item.text))
+        .sort((a, b) => a.text.length - b.text.length);
+      for (const item of textEls) {
+        let node = item.el;
+        for (let depth = 0; node && depth < 7; depth++, node = node.parentElement) {
+          const input = node.querySelector?.(`input[type="${inputType}"]`);
+          if (input) {
+            input.scrollIntoView({ block: 'center', inline: 'center' });
+            input.click();
+            return { ok: true, type: 'clickNearbyInput', patternText, matchedText: item.text, inputType, checked: Boolean(input.checked) };
+          }
+        }
+      }
+      return { ok: false, type: 'clickNearbyInput', patternText, inputType, reason: 'not_found' };
+    }, { patternText, inputType });
   }
   async function clickSelector(frame, selector, index = 0) {
     return frame.evaluate(({ selector, index }) => {
@@ -764,6 +781,7 @@ export default async ({ page }) => {
         if (action.type === 'clickText') result = await clickText(frame, action.pattern, action.pick || 'shortest');
         else if (action.type === 'fill') result = await fill(frame, action.selector, action.value);
         else if (action.type === 'clickSelector') result = await clickSelector(frame, action.selector, action.index || 0);
+        else if (action.type === 'clickNearbyInput') result = await clickNearbyInput(frame, action.pattern, action.inputType || 'checkbox');
         else result = { ok: false, reason: 'unknown_action', action };
         if (result.ok !== false) break;
         await delay(1000);
