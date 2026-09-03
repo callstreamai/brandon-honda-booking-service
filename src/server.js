@@ -314,7 +314,7 @@ async function runSafeFlowSteps(context = {}) {
   }
   const steps = Array.isArray(context.steps) ? context.steps.slice(0, 12) : [];
   const forbidden = /\b(book|confirm|submit|finalize|place appointment|complete appointment|schedule it|reserve)\b/i;
-  const blockedStep = steps.find(step => forbidden.test(String(step || '')));
+  const blockedStep = steps.find(step => forbidden.test(typeof step === 'string' ? step : `${step?.pattern || ''} ${step?.selector || ''}`));
   if (blockedStep) {
     return { ok: false, status: 'blocked_unsafe_step', message: 'Requested step may submit or confirm an appointment.', blockedStep };
   }
@@ -382,27 +382,44 @@ export default async ({ page, context }) => {
       });
       if (!target) return { clicked: false, patternText };
       const text = (target.innerText || target.textContent || target.value || target.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ');
+      target.scrollIntoView({ block: 'center', inline: 'center' });
       target.click();
       return { clicked: true, patternText, text };
     }, patternText);
   }
   async function fillField(frame, selector, value) {
+    try {
+      await frame.click(selector, { clickCount: 3 });
+      await frame.type(selector, String(value), { delay: 25 });
+    } catch (_err) {
+      // Fallback below handles React-controlled inputs.
+    }
     return frame.evaluate(({ selector, value }) => {
       const el = document.querySelector(selector);
       if (!el) return { filled: false, selector, reason: 'not_found' };
       el.focus();
-      el.value = value;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
+      const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && descriptor.set) descriptor.set.call(el, String(value));
+      else el.value = String(value);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(value) }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: '0' }));
       el.blur();
       return { filled: true, selector, value: String(value) };
     }, { selector, value });
   }
   async function checkField(frame, selector, checked = true) {
+    try {
+      await frame.click(selector);
+    } catch (_err) {
+      // Fallback below handles direct DOM click.
+    }
     return frame.evaluate(({ selector, checked }) => {
       const el = document.querySelector(selector);
       if (!el) return { checked: false, selector, reason: 'not_found' };
       if (Boolean(el.checked) !== Boolean(checked)) el.click();
+      el.dispatchEvent(new Event('change', { bubbles: true }));
       return { checked: true, selector, value: Boolean(el.checked) };
     }, { selector, checked });
   }
