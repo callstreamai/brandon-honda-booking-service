@@ -308,7 +308,7 @@ app.post('/availability', requireAuth, (req, res) => {
   res.status(200).json({ success: false, status: 'availability_not_live', available_slots: [], message: 'Live Reynolds availability extraction is not enabled yet.', dealer: DEALER_NAME, address: DEALER_ADDRESS });
 });
 
-app.get('/portal-probe', async (_req, res) => {
+app.get('/portal-probe', requireAuth, async (_req, res) => {
   const probe = await runBrowserlessProbe();
   res.status(probe.ok ? 200 : 502).json(probe);
 });
@@ -324,22 +324,22 @@ app.get('/validate-process', async (_req, res) => {
   res.status(probe.ok ? 200 : 502).json({ ok: Boolean(probe.ok), mode: MODE, browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: ALLOW_LIVE_SUBMIT, portal: compactValidationFromProbe(probe), bookingDryRun: { success: sampleBooking.success, status: sampleBooking.status, message: sampleBooking.message, confirmation_number: sampleBooking.confirmation_number, live_submit_enabled: sampleBooking.live_submit_enabled } });
 });
 
-app.post('/map-flow', async (req, res) => {
+app.post('/map-flow', requireAuth, async (req, res) => {
   const result = await mapFlow(req.body?.steps || [], true);
   res.status(result.ok ? 200 : 400).json(result);
 });
 
-app.post('/mvp-dry-run', async (req, res) => {
+app.post('/mvp-dry-run', requireAuth, async (req, res) => {
   const result = await bookWithPortal({ vehicle_year: req.body?.vehicle_year || '2023', vehicle_model: req.body?.vehicle_model || 'CR-V', service_concern: req.body?.service_concern || 'oil change', preferred_date: req.body?.preferred_date || '09/05/2026', preferred_time: req.body?.preferred_time || '09:30', scheduler_url: SCHEDULER_URL });
   res.status(200).json(result);
 });
 
-app.post('/map-flow-compact', async (req, res) => {
+app.post('/map-flow-compact', requireAuth, async (req, res) => {
   const result = await mapFlow(req.body?.steps || [], false);
   res.status(result.ok ? 200 : 400).json(result);
 });
 
-app.post('/next-state', async (req, res) => {
+app.post('/next-state', requireAuth, async (req, res) => {
   const result = await mapFlow(req.body?.steps || [], false);
   res.status(result.ok ? 200 : 400).json(result);
 });
