@@ -711,24 +711,26 @@ export default async ({ page }) => {
     }, patternText);
   }
   async function clickSelector(frame, selector) {
-    try {
-      await frame.click(selector);
-      return { ok: true, type: 'clickSelector', selector };
-    } catch (err) {
-      return { ok: false, type: 'clickSelector', selector, error: err && err.message ? err.message : String(err) };
-    }
+    return frame.evaluate((selector) => {
+      const el = document.querySelector(selector);
+      if (!el) return { ok: false, type: 'clickSelector', selector, reason: 'not_found' };
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      el.click();
+      return { ok: true, type: 'clickSelector', selector, checked: Boolean(el.checked) };
+    }, selector);
   }
   async function fill(frame, selector, value) {
-    try { await frame.click(selector, { clickCount: 3 }); await page.keyboard.type(String(value), { delay: 20 }); } catch (_) {}
     return frame.evaluate(({ selector, value }) => {
       const el = document.querySelector(selector);
       if (!el) return { ok: false, type: 'fill', selector, reason: 'not_found' };
+      el.focus();
       const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
       const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
       if (descriptor && descriptor.set) descriptor.set.call(el, String(value)); else el.value = String(value);
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(value) }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: String(value).slice(-1) || '0' }));
+      el.blur();
       return { ok: true, type: 'fill', selector, value: String(value), currentValue: el.value };
     }, { selector, value });
   }
