@@ -702,13 +702,21 @@ export default async ({ page }) => {
   async function clickText(frame, patternText) {
     return frame.evaluate((patternText) => {
       const re = new RegExp(patternText, 'i');
-      const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, [tabindex]'));
+      const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]'));
       const target = els.find(el => re.test((el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim()));
       if (!target) return { ok: false, type: 'clickText', patternText };
       const text = (target.innerText || target.textContent || target.value || target.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
       target.scrollIntoView({ block: 'center', inline: 'center' }); target.click();
       return { ok: true, type: 'clickText', patternText, text };
     }, patternText);
+  }
+  async function clickSelector(frame, selector) {
+    try {
+      await frame.click(selector);
+      return { ok: true, type: 'clickSelector', selector };
+    } catch (err) {
+      return { ok: false, type: 'clickSelector', selector, error: err && err.message ? err.message : String(err) };
+    }
   }
   async function fill(frame, selector, value) {
     try { await frame.click(selector, { clickCount: 3 }); await page.keyboard.type(String(value), { delay: 20 }); } catch (_) {}
@@ -734,6 +742,7 @@ export default async ({ page }) => {
       let result;
       if (action.type === 'clickText') result = await clickText(frame, action.pattern);
       else if (action.type === 'fill') result = await fill(frame, action.selector, action.value);
+      else if (action.type === 'clickSelector') result = await clickSelector(frame, action.selector);
       else result = { ok: false, reason: 'unknown_action', action };
       results.push({ action, result });
       await delay(action.waitMs || 1400);
