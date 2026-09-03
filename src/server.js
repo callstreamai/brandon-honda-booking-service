@@ -733,7 +733,7 @@ export default async ({ page }) => {
       for (const item of textEls) {
         let node = item.el;
         for (let depth = 0; node && depth < 7; depth++, node = node.parentElement) {
-          const input = node.querySelector?.(`input[type="${inputType}"]`);
+          const input = node.querySelector?.('input[type="' + inputType + '"]');
           if (input) {
             input.scrollIntoView({ block: 'center', inline: 'center' });
             input.click();
