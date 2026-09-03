@@ -678,8 +678,12 @@ async function runNextState(context = {}) {
   const blockedStep = steps.find(step => forbidden.test(typeof step === 'string' ? step : `${step?.pattern || ''} ${step?.selector || ''}`));
   if (blockedStep) return { ok: false, status: 'blocked_unsafe_step', blockedStep };
   const endpoint = `https://${BROWSERLESS_REGION}/function?token=${encodeURIComponent(BROWSERLESS_API_KEY)}`;
+  const stepsJson = JSON.stringify(steps);
+  const targetUrlJson = JSON.stringify(SCHEDULER_URL);
   const code = `
-export default async ({ page, context }) => {
+export default async ({ page }) => {
+  const targetUrl = ${targetUrlJson};
+  const steps = ${stepsJson};
   async function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
   async function getFrame() { return page.frames().find(frame => /reyrey\\.net|service-portal/i.test(frame.url())); }
   async function state(frame) {
@@ -721,7 +725,7 @@ export default async ({ page, context }) => {
     }, { selector, value });
   }
   try {
-    await page.goto(context.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await delay(2500);
     let frame = await getFrame();
     const results = [];
