@@ -7,6 +7,9 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MODE = process.env.BOOKING_MODE || 'safe'; // safe | live
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+const BROWSERLESS_API_KEY = process.env.BROWSERLESS_API_KEY || '';
+const BROWSERLESS_REGION = process.env.BROWSERLESS_REGION || 'production-sfo.browserless.io';
+const ALLOW_LIVE_SUBMIT = process.env.ALLOW_LIVE_SUBMIT === 'true';
 const DEALER_NAME = 'Brandon Honda';
 const DEALER_ADDRESS = '9209 E Adamo Dr, Tampa, FL 33619';
 const SCHEDULER_URL = 'https://brandonhonda.com/brandon-honda-service-department/schedule-service/';
@@ -39,6 +42,104 @@ const availabilitySchema = z.object({
   transportation_plan: z.string().optional(),
   preferred_date: z.string().min(1).optional()
 });
+
+async function runBrowserlessProbe(context = {}) {
+  if (!BROWSERLESS_API_KEY) {
+    return {
+      ok: false,
+      status: 'browserless_not_configured',
+      message: 'BROWSERLESS_API_KEY is not configured on the service.'
+    };
+  }
+
+  const endpoint = `https://${BROWSERLESS_REGION}/function?token=${encodeURIComponent(BROWSERLESS_API_KEY)}`;
+  const code = `
+export default async ({ page, context }) => {
+  const targetUrl = context.url;
+  const result = {
+    ok: false,
+    targetUrl,
+    finalUrl: null,
+    title: null,
+    hasSchedulerCopy: false,
+    hasAppointmentCopy: false,
+    iframeCount: 0,
+    iframeSources: [],
+    inputCount: 0,
+    buttonTexts: [],
+    linkHrefs: [],
+    textSample: '',
+    error: null
+  };
+  try {
+    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    await page.evaluate(async () => {
+      await new Promise(resolve => {
+        let total = 0;
+        const timer = setInterval(() => {
+          window.scrollBy(0, 700);
+          total += 700;
+          if (total > Math.min(document.body.scrollHeight, 5000)) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, 250);
+      });
+    });
+    await page.waitForTimeout(1500);
+    const data = await page.evaluate(() => {
+      const text = document.body.innerText || '';
+      const lower = text.toLowerCase();
+      return {
+        finalUrl: location.href,
+        title: document.title,
+        hasSchedulerCopy: lower.includes('schedule service') || lower.includes('service scheduling'),
+        hasAppointmentCopy: lower.includes('appointment'),
+        iframeCount: document.querySelectorAll('iframe').length,
+        iframeSources: Array.from(document.querySelectorAll('iframe')).map(f => f.src).filter(Boolean).slice(0, 20),
+        inputCount: document.querySelectorAll('input, select, textarea').length,
+        buttonTexts: Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a')).map(el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim()).filter(Boolean).slice(0, 40),
+        linkHrefs: Array.from(document.querySelectorAll('a')).map(a => a.href).filter(Boolean).filter(h => /schedule|service|appointment|reynolds|xtime|dealer/i.test(h)).slice(0, 40),
+        textSample: text.slice(0, 2000)
+      };
+    });
+    Object.assign(result, data, { ok: true });
+  } catch (err) {
+    result.error = err && err.message ? err.message : String(err);
+  }
+  return { data: result, type: 'application/json' };
+};`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Cache-Control': 'no-cache',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ code, context: { url: context.url || SCHEDULER_URL } })
+  });
+
+  const text = await response.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (_err) {
+    parsed = { raw: text.slice(0, 2000) };
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: 'browserless_error',
+      http_status: response.status,
+      message: 'Browserless probe failed.',
+      details: parsed
+    };
+  }
+
+  return parsed;
+}
 
 const inMemoryBookings = new Map();
 
@@ -101,22 +202,42 @@ async function bookWithPortal(input) {
 
   // Live mode intentionally fails closed until the Reynolds driver is implemented and validated.
   // This prevents the voice agent from claiming a confirmed booking without portal proof.
+  const probe = await runBrowserlessProbe({ url: input.scheduler_url || SCHEDULER_URL });
   return {
     success: false,
-    status: 'live_driver_not_configured',
+    status: probe.ok ? 'live_dry_run_validated_no_submit' : 'portal_probe_failed',
     confirmation_number: null,
     date: input.preferred_date,
     time: normalizeTime(input.preferred_time),
-    message: 'Live Reynolds portal driver is not configured. Transfer caller to the Brandon Honda service team.',
+    message: probe.ok
+      ? 'Browserless reached the Brandon Honda scheduling page, but live final submission is disabled until the Reynolds flow is fully mapped and ALLOW_LIVE_SUBMIT is enabled.'
+      : 'Browserless could not validate the Brandon Honda scheduling page. Transfer caller to the Brandon Honda service team.',
     available_slots: nearestDemoSlots(input.preferred_date),
     proof_url: null,
     dealer: DEALER_NAME,
-    address: DEALER_ADDRESS
+    address: DEALER_ADDRESS,
+    portal_probe: {
+      ok: Boolean(probe.ok),
+      status: probe.status || null,
+      finalUrl: probe.finalUrl || null,
+      title: probe.title || null,
+      iframeCount: probe.iframeCount || 0,
+      inputCount: probe.inputCount || 0,
+      hasSchedulerCopy: Boolean(probe.hasSchedulerCopy),
+      hasAppointmentCopy: Boolean(probe.hasAppointmentCopy)
+    },
+    live_submit_enabled: ALLOW_LIVE_SUBMIT
   };
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'brandon-honda-booking-service', mode: MODE });
+  res.json({
+    ok: true,
+    service: 'brandon-honda-booking-service',
+    mode: MODE,
+    browserlessConfigured: Boolean(BROWSERLESS_API_KEY),
+    liveSubmitEnabled: ALLOW_LIVE_SUBMIT
+  });
 });
 
 app.get('/', (_req, res) => {
@@ -144,6 +265,16 @@ app.post('/availability', requireAuth, (req, res) => {
     dealer: DEALER_NAME,
     address: DEALER_ADDRESS
   });
+});
+
+app.get('/portal-probe', async (_req, res) => {
+  const probe = await runBrowserlessProbe({ url: SCHEDULER_URL });
+  res.status(probe.ok ? 200 : 502).json(probe);
+});
+
+app.post('/portal-probe', requireAuth, async (req, res) => {
+  const probe = await runBrowserlessProbe({ url: req.body?.url || SCHEDULER_URL });
+  res.status(probe.ok ? 200 : 502).json(probe);
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
