@@ -711,11 +711,14 @@ export default async ({ page }) => {
         const visible = style && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
         return { el, text, disabled, visible };
       }).filter(item => item.text && re.test(item.text));
-      const targetInfo = matches.find(item => item.visible && !item.disabled) || matches.find(item => !item.disabled) || matches[matches.length - 1];
+      const enabledMatches = matches.filter(item => !item.disabled);
+      const visibleEnabled = enabledMatches.filter(item => item.visible);
+      const pool = visibleEnabled.length ? visibleEnabled : enabledMatches.length ? enabledMatches : matches;
+      const targetInfo = pool[pool.length - 1];
       if (!targetInfo) return { ok: false, type: 'clickText', patternText };
       targetInfo.el.scrollIntoView({ block: 'center', inline: 'center' });
       targetInfo.el.click();
-      return { ok: true, type: 'clickText', patternText, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length };
+      return { ok: true, type: 'clickText', patternText, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length, selectedOccurrence: pool.length - 1 };
     }, patternText);
   }
   async function clickSelector(frame, selector, index = 0) {
