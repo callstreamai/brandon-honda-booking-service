@@ -1,0 +1,21 @@
+{
+  "name": "brandon-honda-booking-service",
+  "version": "0.1.0",
+  "description": "Bland-compatible booking/availability API for Brandon Honda service scheduling.",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {}
+}
