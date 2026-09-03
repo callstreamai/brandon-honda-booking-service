@@ -69,6 +69,7 @@ export default async ({ page, context }) => {
     buttonTexts: [],
     linkHrefs: [],
     textSample: '',
+    reynoldsFrame: null,
     error: null
   };
   try {
@@ -104,6 +105,26 @@ export default async ({ page, context }) => {
         textSample: text.slice(0, 2000)
       };
     });
+    const frames = page.frames();
+    const reynoldsFrame = frames.find(frame => /reyrey\.net|service-portal/i.test(frame.url()));
+    if (reynoldsFrame) {
+      try {
+        const frameData = await reynoldsFrame.evaluate(() => {
+          const text = document.body?.innerText || '';
+          return {
+            url: location.href,
+            title: document.title,
+            textSample: text.slice(0, 2000),
+            inputCount: document.querySelectorAll('input, select, textarea').length,
+            buttonTexts: Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a')).map(el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim()).filter(Boolean).slice(0, 60),
+            labels: Array.from(document.querySelectorAll('label')).map(el => (el.innerText || '').trim()).filter(Boolean).slice(0, 60)
+          };
+        });
+        data.reynoldsFrame = frameData;
+      } catch (frameErr) {
+        data.reynoldsFrame = { url: reynoldsFrame.url(), error: frameErr && frameErr.message ? frameErr.message : String(frameErr) };
+      }
+    }
     Object.assign(result, data, { ok: true });
   } catch (err) {
     result.error = err && err.message ? err.message : String(err);
@@ -138,7 +159,8 @@ export default async ({ page, context }) => {
     };
   }
 
-  return parsed;
+  const payload = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+  return payload;
 }
 
 const inMemoryBookings = new Map();
@@ -224,7 +246,9 @@ async function bookWithPortal(input) {
       iframeCount: probe.iframeCount || 0,
       inputCount: probe.inputCount || 0,
       hasSchedulerCopy: Boolean(probe.hasSchedulerCopy),
-      hasAppointmentCopy: Boolean(probe.hasAppointmentCopy)
+      hasAppointmentCopy: Boolean(probe.hasAppointmentCopy),
+      hasReynoldsFrame: Boolean(probe.reynoldsFrame),
+      reynoldsFrameUrl: probe.reynoldsFrame?.url || null
     },
     live_submit_enabled: ALLOW_LIVE_SUBMIT
   };
