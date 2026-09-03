@@ -718,14 +718,15 @@ export default async ({ page }) => {
       return { ok: true, type: 'clickText', patternText, text: targetInfo.text, disabled: targetInfo.disabled, visible: targetInfo.visible, matchCount: matches.length };
     }, patternText);
   }
-  async function clickSelector(frame, selector) {
-    return frame.evaluate((selector) => {
-      const el = document.querySelector(selector);
-      if (!el) return { ok: false, type: 'clickSelector', selector, reason: 'not_found' };
+  async function clickSelector(frame, selector, index = 0) {
+    return frame.evaluate(({ selector, index }) => {
+      const matches = Array.from(document.querySelectorAll(selector));
+      const el = matches[index];
+      if (!el) return { ok: false, type: 'clickSelector', selector, index, matchCount: matches.length, reason: 'not_found' };
       el.scrollIntoView({ block: 'center', inline: 'center' });
       el.click();
-      return { ok: true, type: 'clickSelector', selector, checked: Boolean(el.checked) };
-    }, selector);
+      return { ok: true, type: 'clickSelector', selector, index, matchCount: matches.length, checked: Boolean(el.checked) };
+    }, { selector, index });
   }
   async function fill(frame, selector, value) {
     return frame.evaluate(({ selector, value }) => {
@@ -752,7 +753,7 @@ export default async ({ page }) => {
       let result;
       if (action.type === 'clickText') result = await clickText(frame, action.pattern);
       else if (action.type === 'fill') result = await fill(frame, action.selector, action.value);
-      else if (action.type === 'clickSelector') result = await clickSelector(frame, action.selector);
+      else if (action.type === 'clickSelector') result = await clickSelector(frame, action.selector, action.index || 0);
       else result = { ok: false, reason: 'unknown_action', action };
       results.push({ action, result });
       await delay(action.waitMs || 1400);
