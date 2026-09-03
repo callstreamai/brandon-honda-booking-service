@@ -299,7 +299,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/', (_req, res) => {
-  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: MODE, endpoints: ['/health', '/availability', '/book-service', '/portal-probe', '/validate-process', '/map-flow', '/mvp-dry-run', '/map-final-state', '/next-state'] });
+  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: MODE, public_endpoints: ['/health'], protected_endpoints: ['/availability', '/book-service', '/portal-probe', '/validate-process', '/map-flow', '/mvp-dry-run', '/map-flow-compact', '/next-state'] });
 });
 
 app.post('/availability', requireAuth, (req, res) => {
@@ -318,7 +318,7 @@ app.post('/portal-probe', requireAuth, async (_req, res) => {
   res.status(probe.ok ? 200 : 502).json(probe);
 });
 
-app.get('/validate-process', async (_req, res) => {
+app.get('/validate-process', requireAuth, async (_req, res) => {
   const probe = await runBrowserlessProbe();
   const sampleBooking = await bookWithPortal({ vehicle_year: '2023', vehicle_model: 'CR-V', service_concern: 'oil change', preferred_date: '09/05/2026', preferred_time: '09:30', scheduler_url: SCHEDULER_URL });
   res.status(probe.ok ? 200 : 502).json({ ok: Boolean(probe.ok), mode: MODE, browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: ALLOW_LIVE_SUBMIT, portal: compactValidationFromProbe(probe), bookingDryRun: { success: sampleBooking.success, status: sampleBooking.status, message: sampleBooking.message, confirmation_number: sampleBooking.confirmation_number, live_submit_enabled: sampleBooking.live_submit_enabled } });
