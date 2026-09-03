@@ -854,17 +854,33 @@ function nearestDemoSlots(preferredDate) {
 async function bookWithPortal(input) {
   if (MODE !== 'live') {
     const confirmation = makeConfirmation(input.call_id);
+    const probe = await runBrowserlessProbe({ url: input.scheduler_url || SCHEDULER_URL });
     return {
-      success: true,
-      status: 'simulated',
-      confirmation_number: confirmation,
+      success: Boolean(probe.ok),
+      status: probe.ok ? 'safe_mode_portal_validated' : 'safe_mode_portal_probe_failed',
+      confirmation_number: probe.ok ? confirmation : null,
       date: input.preferred_date,
       time: normalizeTime(input.preferred_time),
-      message: `Draft/safe-mode confirmation for ${DEALER_NAME}. Live Reynolds booking is not enabled on this service yet.`,
-      available_slots: [],
+      message: probe.ok
+        ? `Safe-mode demo confirmation for ${DEALER_NAME}. Browserless validated the Reynolds scheduling portal, but live final submission remains disabled.`
+        : `Safe-mode could not validate the Reynolds scheduling portal for ${DEALER_NAME}. Transfer caller to the service team.`,
+      available_slots: probe.ok ? nearestDemoSlots(input.preferred_date) : [],
       proof_url: null,
       dealer: DEALER_NAME,
-      address: DEALER_ADDRESS
+      address: DEALER_ADDRESS,
+      portal_probe: {
+        ok: Boolean(probe.ok),
+        title: probe.title || null,
+        finalUrl: probe.finalUrl || null,
+        iframeCount: probe.iframeCount || 0,
+        inputCount: probe.inputCount || 0,
+        hasSchedulerCopy: Boolean(probe.hasSchedulerCopy),
+        hasAppointmentCopy: Boolean(probe.hasAppointmentCopy),
+        hasReynoldsFrame: Boolean(probe.reynoldsFrame),
+        reynoldsFrameUrl: probe.reynoldsFrame?.url || null,
+        reynoldsStartClicked: Boolean(probe.reynoldsStartClicked)
+      },
+      live_submit_enabled: ALLOW_LIVE_SUBMIT
     };
   }
 
