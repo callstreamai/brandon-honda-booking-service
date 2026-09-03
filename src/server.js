@@ -386,6 +386,26 @@ export default async ({ page, context }) => {
       return { clicked: true, patternText, text };
     }, patternText);
   }
+  async function fillField(frame, selector, value) {
+    return frame.evaluate(({ selector, value }) => {
+      const el = document.querySelector(selector);
+      if (!el) return { filled: false, selector, reason: 'not_found' };
+      el.focus();
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.blur();
+      return { filled: true, selector, value: String(value) };
+    }, { selector, value });
+  }
+  async function checkField(frame, selector, checked = true) {
+    return frame.evaluate(({ selector, checked }) => {
+      const el = document.querySelector(selector);
+      if (!el) return { checked: false, selector, reason: 'not_found' };
+      if (Boolean(el.checked) !== Boolean(checked)) el.click();
+      return { checked: true, selector, value: Boolean(el.checked) };
+    }, { selector, checked });
+  }
   try {
     await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
     await delay(3000);
@@ -394,12 +414,23 @@ export default async ({ page, context }) => {
     if (!frame) return { data: { ok: false, status: 'reynolds_frame_not_found', snapshots }, type: 'application/json' };
     const clicks = [];
     for (const step of steps) {
-      const clicked = await clickByText(frame, step);
-      clicks.push(clicked);
-      await delay(2500);
+      const action = typeof step === 'string' ? { type: 'clickText', pattern: step } : step;
+      let result;
+      if (!action || action.type === 'clickText') {
+        result = await clickByText(frame, action?.pattern || String(step));
+      } else if (action.type === 'fill') {
+        result = await fillField(frame, action.selector, action.value);
+      } else if (action.type === 'check') {
+        result = await checkField(frame, action.selector, action.checked !== false);
+      } else {
+        result = { skipped: true, reason: 'unknown_action_type', action };
+      }
+      clicks.push({ action, result });
+      await delay(action.waitMs || 2500);
       frame = await getFrame();
-      await snapshot('after_' + step.replace(/[^a-z0-9]+/gi, '_').slice(0, 40), frame);
-      if (!clicked.clicked) break;
+      const label = (action.pattern || action.selector || action.type || 'step').replace(/[^a-z0-9]+/gi, '_').slice(0, 40);
+      await snapshot('after_' + label, frame);
+      if (result.clicked === false || result.filled === false || result.checked === false) break;
     }
     return { data: { ok: true, status: 'mapped_steps', clicks, snapshots }, type: 'application/json' };
   } catch (err) {
