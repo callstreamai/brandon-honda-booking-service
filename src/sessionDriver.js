@@ -369,10 +369,11 @@ export async function collectAvailability(sessionId, input = {}) {
     t = await text();
     if (has(t, 'Select Your Make')) {
       if (!await clickUntil({ type: 'clickText', pattern: '^Honda$' }, 'Select Your Make', { absent: true, waitMs: 1200 }) && !has(await text(), year)) return fail('make_failed');
-      if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(year) + '$' }, 'Estimated Mileage', { attempts: 2, waitMs: 800 })) {
-        // year click shows the model list; the model click shows mileage
-        if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(modelLabel) + '$' }, 'Estimated Mileage')) return fail('model_not_available_for_year', { year, model: modelLabel });
+      // make -> year list -> model list -> mileage; assert each screen by its heading
+      if (!has(await text(), 'Select Model')) {
+        if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(year) + '$' }, 'Select Model', { attempts: 3, waitMs: 1200 })) return fail('year_not_available', { year });
       }
+      if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(modelLabel) + '$' }, 'Estimated Mileage', { attempts: 3 })) return fail('model_not_available_for_year', { year, model: modelLabel });
     }
     // 3. mileage + PROCEED (second known click race)
     t = await text();
@@ -386,8 +387,10 @@ export async function collectAvailability(sessionId, input = {}) {
     const onService = has(t, 'TELL US') || has(t, 'OIL CHANGE') || has(t, 'RECALL');
     if (onService) {
       if (serviceLabel && serviceLabel.toUpperCase() !== 'TELL US') {
-        const r = await applyStep(page, { type: 'clickNearbyInput', pattern: '^' + escapeRegex(serviceLabel) + '$' });
-        note('service_label', { label: serviceLabel, ok: r.ok, reason: r.reason });
+        // service tiles carry the label plus "Call Dealer for Pricing"; prefer a checkbox if one exists, else click the tile by text
+        let r = await applyStep(page, { type: 'clickNearbyInput', pattern: '^' + escapeRegex(serviceLabel) + '$' });
+        if (r.ok === false) r = await applyStep(page, { type: 'clickText', pattern: '^' + escapeRegex(serviceLabel) + '(\\s|$)', pick: 'shortest' });
+        note('service_label', { label: serviceLabel, ok: r.ok, reason: r.reason, via: r.type });
         if (r.ok === false) return fail('service_label_not_found', { label: serviceLabel });
       } else {
         const r1 = await applyStep(page, { type: 'clickText', pattern: 'TELL US', pick: 'shortest' });
