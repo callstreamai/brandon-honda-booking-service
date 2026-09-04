@@ -2,6 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -299,7 +300,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/', (_req, res) => {
-  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: MODE, public_endpoints: ['/health'], protected_endpoints: ['/availability', '/book-service', '/portal-probe', '/validate-process', '/map-flow', '/mvp-dry-run', '/map-flow-compact', '/next-state'] });
+  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: MODE, public_endpoints: ['/health'], protected_endpoints: ['/availability', '/book-service', '/portal-probe', '/validate-process', '/map-flow', '/mvp-dry-run', '/map-flow-compact', '/next-state', '/sessions/start', '/sessions/:id/step', '/sessions/:id/state', '/sessions/:id/screenshot'] });
 });
 
 app.post('/availability', requireAuth, (req, res) => {
@@ -342,6 +343,31 @@ app.post('/map-flow-compact', requireAuth, async (req, res) => {
 app.post('/next-state', requireAuth, async (req, res) => {
   const result = await mapFlow(req.body?.steps || [], false);
   res.status(result.ok ? 200 : 400).json(result);
+});
+
+app.post('/sessions/start', requireAuth, async (req, res) => {
+  const result = await startSession({ url: req.body?.url || SCHEDULER_URL });
+  res.status(result.ok === false ? 500 : 200).json(result);
+});
+
+app.post('/sessions/:id/step', requireAuth, async (req, res) => {
+  const result = await stepSession(req.params.id, req.body?.steps || []);
+  res.status(result.ok ? 200 : 404).json(result);
+});
+
+app.get('/sessions/:id/state', requireAuth, async (req, res) => {
+  const result = await getSessionState(req.params.id);
+  res.status(result.ok ? 200 : 404).json(result);
+});
+
+app.get('/sessions/:id/screenshot', requireAuth, async (req, res) => {
+  const result = await screenshotSession(req.params.id);
+  res.status(result.ok ? 200 : 404).json(result);
+});
+
+app.delete('/sessions/:id', requireAuth, async (req, res) => {
+  const result = await closeSession(req.params.id);
+  res.status(result.ok ? 200 : 404).json(result);
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
