@@ -72,16 +72,34 @@ async function snapshot(page) {
 }
 
 async function findControl(frame, pattern, { pick = 'shortest' } = {}) {
-  const controls = frame.locator('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]').filter({ hasText: new RegExp(pattern, 'i') });
+  const re = new RegExp(pattern, 'i');
+  const roleButtons = frame.getByRole('button', { name: re });
+  const buttonCount = await roleButtons.count().catch(() => 0);
+  const roleCandidates = [];
+  for (let i = 0; i < buttonCount; i++) {
+    const loc = roleButtons.nth(i);
+    const text = ((await loc.innerText().catch(async () => await loc.getAttribute('aria-label').catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
+    const visible = await loc.isVisible().catch(() => false);
+    const enabled = await loc.isEnabled().catch(() => true);
+    roleCandidates.push({ loc, text, visible, enabled, score: text.length, index: i, strategy: 'role:button' });
+  }
+  let rolePool = roleCandidates.filter(c => c.visible && c.enabled);
+  if (rolePool.length) {
+    if (pick === 'last') return rolePool[rolePool.length - 1];
+    if (pick === 'first') return rolePool[0];
+    return rolePool.sort((a, b) => a.score - b.score)[0];
+  }
+
+  const controls = frame.locator('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]').filter({ hasText: re });
   const count = await controls.count();
-  if (!count) return null;
-  const candidates = [];
+  const candidates = [...roleCandidates];
+  if (!count && !candidates.length) return null;
   for (let i = 0; i < count; i++) {
     const loc = controls.nth(i);
     const text = ((await loc.innerText().catch(async () => await loc.getAttribute('aria-label').catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
     const visible = await loc.isVisible().catch(() => false);
     const enabled = await loc.isEnabled().catch(() => true);
-    candidates.push({ loc, text, visible, enabled, score: text.length, index: i });
+    candidates.push({ loc, text, visible, enabled, score: text.length, index: i, strategy: 'generic' });
   }
   const pool = candidates.filter(c => c.visible && c.enabled);
   if (!pool.length) {
