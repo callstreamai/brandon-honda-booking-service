@@ -25,7 +25,7 @@ async function getReynoldsFrame(page) {
   for (let i = 0; i < 40; i++) {
     const frame = page.frames().find(f => /reyrey\.net|service-portal/i.test(f.url()));
     if (frame) return frame;
-    await page.waitForTimeout(500);
+    await page.waitForLoadState('domcontentloaded', { timeout: 500 }).catch(() => {});
   }
   throw new Error('Reynolds iframe not found');
 }
@@ -119,8 +119,12 @@ async function clickText(frame, pattern, opts = {}) {
     return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled };
   } catch (err) {
     if (opts.acceptIfTextAppears) {
-      await frame.page().waitForTimeout(opts.postClickSettleMs || 1500).catch(() => {});
       const expected = String(opts.acceptIfTextAppears).toLowerCase();
+      await frame.page().waitForFunction(
+        value => document.body?.innerText?.toLowerCase().includes(value),
+        expected,
+        { timeout: opts.postClickSettleMs || 1500 }
+      ).catch(() => {});
       const bodyText = await frame.evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
       if (bodyText.toLowerCase().includes(expected)) {
         return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled, warning: 'click_failed_but_expected_text_appeared', expectedText: opts.acceptIfTextAppears, error: serializeError(err) };
@@ -196,7 +200,7 @@ async function clickTimeInTransportRow(frame, transport, time, opts = {}) {
       .filter(item => item.text && item.visible && !item.disabled);
     const labelElements = Array.from(document.querySelectorAll('button, [role="button"], a, li, label, div, span, p'))
       .map((el, index) => ({ el, index, text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''), visible: isVisible(el), disabled: isDisabled(el) }))
-      .filter(item => item.text && item.visible && !item.disabled && item.text.length <= 160);
+      .filter(item => item.text && item.visible && !item.disabled && item.text.length <= 1600);
     const rowLabels = labelElements
       .filter(item => norm(item.text).includes(desiredTransport))
       .map(item => ({ ...item, otherTransportCount: knownTransportLabels.filter(label => label !== desiredTransport && norm(item.text).includes(label)).length }))
@@ -252,8 +256,8 @@ async function clickTimeInTransportRow(frame, transport, time, opts = {}) {
 
 async function applyStep(page, step) {
   const frame = await getReynoldsFrame(page);
-  if (step.finalSubmit === true && process.env.ALLOW_LIVE_SUBMIT !== 'true') {
-    return { ok: false, type: 'blockedFinalSubmit', reason: 'ALLOW_LIVE_SUBMIT is not true' };
+  if (step.finalSubmit === true && process.env.LIVE_BOOKING_ENABLED !== 'true') {
+    return { ok: false, type: 'blockedFinalSubmit', reason: 'LIVE_BOOKING_ENABLED is not true' };
   }
   if (step.type === 'clickText') return clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS), acceptIfTextAppears: step.acceptIfTextAppears, postClickSettleMs: step.postClickSettleMs });
   if (step.type === 'clickSelector') return clickSelector(frame, step.selector, step.index || 0, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
@@ -270,7 +274,7 @@ export async function startSession({ url = DEFAULT_URL } = {}) {
     const context = browser.contexts()[0] || await browser.newContext();
     const page = context.pages()[0] || await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    await page.waitForTimeout(2500);
+    await page.waitForLoadState('networkidle', { timeout: 2500 }).catch(() => {});
     await getReynoldsFrame(page);
     const id = crypto.randomUUID();
     sessions.set(id, { id, browser, context, page, createdAt: Date.now(), lastUsedAt: Date.now() });
@@ -295,7 +299,15 @@ export async function stepSession(id, steps = []) {
         result = { ok: false, reason: 'step_exception', error: serializeError(err) };
       }
       results.push({ step, result });
-      await session.page.waitForTimeout(step.waitMs || 1200);
+      if (step.waitForText) {
+        await session.page.waitForFunction(
+          expected => document.body?.innerText?.toLowerCase().includes(String(expected).toLowerCase()),
+          step.waitForText,
+          { timeout: step.waitTimeoutMs || 5000 }
+        ).catch(() => {});
+      } else if (step.waitMs) {
+        await session.page.waitForLoadState('networkidle', { timeout: Math.min(Number(step.waitMs) || 500, 1200) }).catch(() => {});
+      }
       if (result.ok === false) break;
     }
     return { ok: true, status: 'stepped', id, results, state: await snapshot(session.page) };
