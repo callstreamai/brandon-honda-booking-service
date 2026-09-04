@@ -82,7 +82,7 @@ async function findControl(frame, pattern, { pick = 'shortest' } = {}) {
   const roleCandidates = [];
   for (let i = 0; i < buttonCount; i++) {
     const loc = roleButtons.nth(i);
-    const text = ((await loc.innerText().catch(async () => await loc.getAttribute('aria-label').catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
+    const text = ((await loc.innerText({ timeout: 1500 }).catch(async () => await loc.getAttribute('aria-label', { timeout: 800 }).catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
     const visible = await loc.isVisible().catch(() => false);
     const enabled = await loc.isEnabled().catch(() => true);
     roleCandidates.push({ loc, text, visible, enabled, score: text.length, index: i, strategy: 'role:button' });
@@ -100,7 +100,7 @@ async function findControl(frame, pattern, { pick = 'shortest' } = {}) {
   if (!count && !candidates.length) return null;
   for (let i = 0; i < count; i++) {
     const loc = controls.nth(i);
-    const text = ((await loc.innerText().catch(async () => await loc.getAttribute('aria-label').catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
+    const text = ((await loc.innerText({ timeout: 1500 }).catch(async () => await loc.getAttribute('aria-label', { timeout: 800 }).catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
     const visible = await loc.isVisible().catch(() => false);
     const enabled = await loc.isEnabled().catch(() => true);
     candidates.push({ loc, text, visible, enabled, score: text.length, index: i, strategy: 'generic' });
@@ -167,6 +167,38 @@ async function clickNearbyInput(frame, pattern, inputType = 'checkbox') {
     }
   }
   return { ok: false, type: 'clickNearbyInput', pattern, inputType, reason: 'not_found' };
+}
+
+// Clicks the smallest visible element whose text matches, or its nearest clickable ancestor.
+// Covers the portal's div-based tiles (service menu, advisor cards, calendar days) that are
+// not buttons, links, or labels.
+async function clickAnyText(frame, pattern, opts = {}) {
+  const marker = `kafka-text-${crypto.randomUUID()}`;
+  const found = await frame.evaluate(({ pattern, marker }) => {
+    const compact = s => (s || '').replace(/\s+/g, ' ').trim();
+    const re = new RegExp(pattern, 'i');
+    const isVisible = el => { const r = el.getBoundingClientRect(); const st = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden'; };
+    const all = Array.from(document.querySelectorAll('body *')).filter(el => !['SCRIPT', 'STYLE', 'HTML', 'BODY'].includes(el.tagName) && isVisible(el));
+    const matches = all.map(el => ({ el, text: compact(el.innerText || el.textContent || '') }))
+      .filter(x => x.text && x.text.length <= 200 && re.test(x.text))
+      .sort((a, b) => a.text.length - b.text.length);
+    if (!matches.length) return { ok: false, reason: 'not_found' };
+    let target = matches[0].el;
+    for (let node = target, d = 0; node && d < 4; d++, node = node.parentElement) {
+      if (node.matches('button, a, [role="button"], label, li, [onclick], [tabindex]')) { target = node; break; }
+    }
+    target.setAttribute('data-kafka-text-target', marker);
+    return { ok: true, matched: matches[0].text, tag: target.tagName.toLowerCase(), matchCount: matches.length };
+  }, { pattern, marker });
+  if (!found.ok) return { ok: false, type: 'clickAnyText', pattern, reason: found.reason };
+  try {
+    await frame.locator(`[data-kafka-text-target="${marker}"]`).click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
+    return { ok: true, type: 'clickAnyText', pattern, matched: found.matched, tag: found.tag, matchCount: found.matchCount };
+  } catch (err) {
+    return { ok: false, type: 'clickAnyText', pattern, reason: 'click_failed', error: serializeError(err) };
+  } finally {
+    await frame.evaluate(m => document.querySelectorAll(`[data-kafka-text-target="${m}"]`).forEach(el => el.removeAttribute('data-kafka-text-target')), marker).catch(() => {});
+  }
 }
 
 async function fill(frame, selector, value) {
@@ -389,7 +421,7 @@ export async function collectAvailability(sessionId, input = {}) {
       if (serviceLabel && serviceLabel.toUpperCase() !== 'TELL US') {
         // service tiles carry the label plus "Call Dealer for Pricing"; prefer a checkbox if one exists, else click the tile by text
         let r = await applyStep(page, { type: 'clickNearbyInput', pattern: '^' + escapeRegex(serviceLabel) + '$' });
-        if (r.ok === false) r = await applyStep(page, { type: 'clickText', pattern: '^' + escapeRegex(serviceLabel) + '(\\s|$)', pick: 'shortest' });
+        if (r.ok === false) r = await applyStep(page, { type: 'clickAnyText', pattern: '^' + escapeRegex(serviceLabel) + '$' });
         note('service_label', { label: serviceLabel, ok: r.ok, reason: r.reason, via: r.type });
         if (r.ok === false) return fail('service_label_not_found', { label: serviceLabel });
       } else {
@@ -487,7 +519,14 @@ async function applyStep(page, step) {
   if (step.finalSubmit === true && process.env.LIVE_BOOKING_ENABLED !== 'true') {
     return { ok: false, type: 'blockedFinalSubmit', reason: 'LIVE_BOOKING_ENABLED is not true' };
   }
-  if (step.type === 'clickText') return clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS), acceptIfTextAppears: step.acceptIfTextAppears, postClickSettleMs: step.postClickSettleMs });
+  if (step.type === 'clickText') {
+    const r = await clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS), acceptIfTextAppears: step.acceptIfTextAppears, postClickSettleMs: step.postClickSettleMs });
+    if (r.ok !== false || step.noFallback) return r;
+    // not a button/link/label: fall back to any visible element with that text
+    const alt = await clickAnyText(frame, step.pattern, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
+    return alt.ok ? { ...alt, fallbackFrom: r.reason } : { ...r, fallback: alt };
+  }
+  if (step.type === 'clickAnyText') return clickAnyText(frame, step.pattern, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
   if (step.type === 'clickSelector') return clickSelector(frame, step.selector, step.index || 0, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
   if (step.type === 'clickNearbyInput') return clickNearbyInput(frame, step.pattern, step.inputType || 'checkbox');
   if (step.type === 'clickTimeInTransportRow') return clickTimeInTransportRow(frame, step.transport, step.time, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
