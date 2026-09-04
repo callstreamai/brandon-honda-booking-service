@@ -474,9 +474,10 @@ export async function collectAvailability(sessionId, input = {}) {
       }
       // the footer reads SKIP until a service is selected; never click SKIP. The mileage screen's
       // own Proceed is still mounted underneath, so take the LAST matching footer button.
-      if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true }, 'TELL US', { absent: true })) return fail('service_proceed_failed');
+      if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true }, 'ANY ADVISOR', { waitMs: 2500 })) return fail('service_proceed_failed');
     }
     // 5. adaptive walk: advisor -> date -> time grid (screen order confirmed at runtime; see trace)
+    let advisorDone = false;
     for (let hop = 0; hop < 8; hop++) {
       const frame = await getReynoldsFrame(page);
       const st = await snapshot(page);
@@ -496,13 +497,13 @@ export async function collectAvailability(sessionId, input = {}) {
         return done(row.times, row);
       }
       // advisor screen
-      const anyAdvisor = ctl.find(c => /any advisor/i.test(c.text));
-      if (anyAdvisor) {
-        await applyStep(page, { type: 'clickText', pattern: 'ANY ADVISOR', pick: 'shortest' });
-        note('advisor', { clicked: true });
-        const proceed = ctl.find(c => /^PROCEED$/i.test(c.text));
-        if (proceed) await applyStep(page, { type: 'clickText', pattern: '^PROCEED$', pick: 'last' });
-        await page.waitForTimeout(800);
+      if (/would you like to see a certain advisor/i.test(body) && !advisorDone) {
+        advisorDone = true;
+        // the advisor list is a tile grid like the service menu; ANY ADVISOR is one of the tiles
+        let r = await applyStep(page, { type: 'clickCheckboxNearText', pattern: '^ANY ADVISOR$' });
+        if (r.ok === false) r = await applyStep(page, { type: 'clickAnyText', pattern: '^ANY ADVISOR$' });
+        note('advisor', { selected: r.ok, checked: r.checked, reason: r.reason, header: body.slice(0, 120) });
+        if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true }, 'would you like to see a certain advisor', { absent: true, waitMs: 2500 })) return fail('advisor_proceed_failed');
         continue;
       }
       // date screen: a month header plus day-number buttons, or a date input
