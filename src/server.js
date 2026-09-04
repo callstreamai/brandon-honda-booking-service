@@ -6,11 +6,10 @@ import { startSession, stepSession, getSessionState, screenshotSession, closeSes
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const MODE = process.env.BOOKING_MODE || 'safe'; // safe | live
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 const BROWSERLESS_API_KEY = process.env.BROWSERLESS_API_KEY || '';
 const BROWSERLESS_REGION = process.env.BROWSERLESS_REGION || 'production-sfo.browserless.io';
-const ALLOW_LIVE_SUBMIT = process.env.ALLOW_LIVE_SUBMIT === 'true';
+const LIVE_BOOKING_ENABLED = process.env.LIVE_BOOKING_ENABLED === 'true';
 
 const DEALER_NAME = 'Brandon Honda';
 const DEALER_ADDRESS = '9209 E Adamo Dr, Tampa, FL 33619';
@@ -28,11 +27,18 @@ const bookingSchema = z.object({
   vehicle_year: z.union([z.string(), z.number()]).optional(),
   vehicle_model: z.string().min(1),
   vehicle_mileage: z.union([z.string(), z.number()]).optional(),
+  service_label: z.string().optional(),
+  service_free_text: z.string().optional().default(''),
   service_concern: z.string().min(1),
   additional_services: z.string().optional().default('none'),
+  transport_option: z.string().optional(),
   transportation_plan: z.string().min(1),
   preferred_date: z.string().min(1),
   preferred_time: z.string().min(1),
+  customer_email: z.string().optional(),
+  confirmation_method: z.string().optional(),
+  sms_consent: z.union([z.boolean(), z.string()]).optional(),
+  consent_recorded: z.union([z.boolean(), z.string()]).optional(),
   dealer: z.string().optional(),
   scheduler_url: z.string().url().optional()
 });
@@ -40,8 +46,12 @@ const bookingSchema = z.object({
 const availabilitySchema = z.object({
   vehicle_year: z.union([z.string(), z.number()]).optional(),
   vehicle_model: z.string().optional(),
+  vehicle_mileage: z.union([z.string(), z.number()]).optional(),
+  service_label: z.string().optional(),
+  service_free_text: z.string().optional(),
   service_concern: z.string().optional(),
   transportation_plan: z.string().optional(),
+  transport_option: z.string().optional(),
   preferred_date: z.string().min(1).optional()
 });
 
@@ -135,6 +145,24 @@ function browserTask({ page, context }) {
         return { url: location.href, title: document.title, text: compact((document.body && document.body.innerText) || '').slice(0, full ? 6000 : 3500), fields, buttons };
       }, full);
     }
+    async function waitForCondition(frame, condition = {}, timeoutMs = 5000) {
+      const started = Date.now();
+      const mode = condition.mode || (condition.text ? 'textIncludes' : 'settle');
+      const value = String(condition.value || condition.text || '').toLowerCase();
+      while (Date.now() - started < timeoutMs) {
+        try {
+          const state = await getState(frame);
+          const text = String(state.text || '').toLowerCase();
+          if (mode === 'textIncludes' && value && text.includes(value)) return { ok: true, mode, value: condition.value || condition.text, elapsedMs: Date.now() - started };
+          if (mode === 'textExcludes' && value && !text.includes(value)) return { ok: true, mode, value: condition.value || condition.text, elapsedMs: Date.now() - started };
+          if (mode === 'urlIncludes' && value && String(state.url || '').toLowerCase().includes(value)) return { ok: true, mode, value: condition.value || condition.text, elapsedMs: Date.now() - started };
+          if (mode === 'controlIncludes' && value && (state.buttons || []).some(b => String(b.text || '').toLowerCase().includes(value))) return { ok: true, mode, value: condition.value || condition.text, elapsedMs: Date.now() - started };
+          if (mode === 'settle' && Date.now() - started >= 250) return { ok: true, mode, elapsedMs: Date.now() - started };
+        } catch (_err) {}
+        await delay(100);
+      }
+      return { ok: false, mode, value: condition.value || condition.text, elapsedMs: Date.now() - started };
+    }
     async function clickText(frame, patternText, pick = 'shortest') {
       return frame.evaluate(({ patternText, pick }) => {
         const compact = s => (s || '').replace(/\s+/g, ' ').trim();
@@ -209,7 +237,6 @@ function browserTask({ page, context }) {
     }
     try {
       await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-      await delay(2500);
       let frame = await getFrame();
       const results = [];
       for (const step of steps) {
@@ -226,11 +253,12 @@ function browserTask({ page, context }) {
           else if (action.type === 'clickNearbyInput') result = await clickNearbyInput(frame, action.pattern, action.inputType || 'checkbox');
           else result = { ok: false, reason: 'unknown_action', action };
           if (result.ok !== false) break;
-          await delay(1000);
+          await waitForCondition(frame, action.retryUntil || { mode: 'settle' }, action.retryWaitMs || 1000);
           frame = await getFrame();
         }
         results.push({ action, result });
-        await delay(action.waitMs || 1400);
+        if (action.waitFor) await waitForCondition(frame, action.waitFor, action.waitTimeoutMs || 5000);
+        else if (action.waitMs) await waitForCondition(frame, { mode: 'settle' }, Math.min(Number(action.waitMs) || 250, 500));
         frame = await getFrame();
         if (result.ok === false) break;
       }
@@ -252,8 +280,8 @@ async function mapFlow(steps, full = false) {
 
 async function runBrowserlessProbe() {
   const result = await mapFlow([
-    { type: 'clickText', pattern: 'Schedule Appointment', pick: 'shortest', waitMs: 3000 },
-    { type: 'clickText', pattern: "I'm new", pick: 'shortest', waitMs: 3000 }
+    { type: 'clickText', pattern: 'Schedule Appointment', pick: 'shortest', waitFor: { mode: 'textIncludes', text: "I'M NEW" } },
+    { type: 'clickText', pattern: "I'm new", pick: 'shortest', waitFor: { mode: 'textIncludes', text: 'Honda' } }
   ], false);
   return {
     ...result.finalState,
@@ -287,29 +315,30 @@ async function bookWithPortal(input) {
       ? `Dry-run only. Browserless validated the ${DEALER_NAME} Reynolds scheduling flow through vehicle and service selection, but no appointment was created.`
       : `Could not validate the Reynolds scheduling flow for ${DEALER_NAME}. Transfer caller to the service team.`,
     available_slots: [],
+    slots: [],
     proof_url: null,
     dealer: DEALER_NAME,
     address: DEALER_ADDRESS,
     portal_probe: { ok: Boolean(validation.ok), status: validation.status, lastScreenText: validation.finalState?.text?.slice(0, 1200) || null },
-    live_submit_enabled: ALLOW_LIVE_SUBMIT
+    live_submit_enabled: LIVE_BOOKING_ENABLED
   };
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'brandon-honda-booking-service', mode: MODE, browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: ALLOW_LIVE_SUBMIT });
+  res.json({ ok: true, service: 'brandon-honda-booking-service', mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: LIVE_BOOKING_ENABLED });
 });
 
 app.get('/', (_req, res) => {
   const routes = app._router.stack
     .filter(layer => layer.route)
     .map(layer => ({ path: layer.route.path, methods: Object.keys(layer.route.methods).sort() }));
-  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: MODE, public_endpoints: ['/health'], routes });
+  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', public_endpoints: ['/health'], routes });
 });
 
 app.post('/availability', requireAuth, (req, res) => {
   const parsed = availabilitySchema.safeParse(req.body || {});
   if (!parsed.success) return res.status(400).json({ success: false, message: 'Invalid availability payload', issues: parsed.error.issues });
-  res.status(200).json({ success: false, status: 'availability_not_live', available_slots: [], message: 'Live Reynolds availability extraction is not enabled yet.', dealer: DEALER_NAME, address: DEALER_ADDRESS });
+  res.status(200).json({ success: false, status: 'availability_not_live', slots: [], available_slots: [], message: 'Live Reynolds availability extraction is not enabled yet.', dealer: DEALER_NAME, address: DEALER_ADDRESS });
 });
 
 app.get('/portal-probe', requireAuth, async (_req, res) => {
@@ -325,7 +354,7 @@ app.post('/portal-probe', requireAuth, async (_req, res) => {
 app.get('/validate-process', requireAuth, async (_req, res) => {
   const probe = await runBrowserlessProbe();
   const sampleBooking = await bookWithPortal({ vehicle_year: '2023', vehicle_model: 'CR-V', service_concern: 'oil change', preferred_date: '09/05/2026', preferred_time: '09:30', scheduler_url: SCHEDULER_URL });
-  res.status(probe.ok ? 200 : 502).json({ ok: Boolean(probe.ok), mode: MODE, browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: ALLOW_LIVE_SUBMIT, portal: compactValidationFromProbe(probe), bookingDryRun: { success: sampleBooking.success, status: sampleBooking.status, message: sampleBooking.message, confirmation_number: sampleBooking.confirmation_number, live_submit_enabled: sampleBooking.live_submit_enabled } });
+  res.status(probe.ok ? 200 : 502).json({ ok: Boolean(probe.ok), mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: LIVE_BOOKING_ENABLED, portal: compactValidationFromProbe(probe), bookingDryRun: { success: sampleBooking.success, status: sampleBooking.status, message: sampleBooking.message, confirmation_number: sampleBooking.confirmation_number, live_submit_enabled: sampleBooking.live_submit_enabled } });
 });
 
 app.post('/map-flow', requireAuth, async (req, res) => {
@@ -351,6 +380,8 @@ app.post('/next-state', requireAuth, async (req, res) => {
 app.post('/sessions/start', requireAuth, async (req, res) => {
   try {
     const result = await startSession({ url: req.body?.url || SCHEDULER_URL });
+    if (result.ok) result.success = true;
+    if (result.id && !result.session_id) result.session_id = result.id;
     res.status(result.ok === false ? 502 : 200).json(result);
   } catch (err) {
     console.error('session_start_unhandled', err);
@@ -404,7 +435,7 @@ app.post('/book-service', requireAuth, async (req, res) => {
   const key = parsed.data.call_id || `${parsed.data.caller_phone}-${parsed.data.customer_name}-${parsed.data.preferred_date}-${parsed.data.preferred_time}`;
   if (inMemoryRequests.has(key)) return res.json({ ...inMemoryRequests.get(key), idempotent_replay: true });
   const result = await bookWithPortal(parsed.data);
-  const response = { ...result, call_id: parsed.data.call_id || null, vehicle: { year: parsed.data.vehicle_year || null, model: parsed.data.vehicle_model, mileage: parsed.data.vehicle_mileage || null }, service_concern: parsed.data.service_concern, additional_services: parsed.data.additional_services || 'none', transportation_plan: parsed.data.transportation_plan, scheduler_url: SCHEDULER_URL };
+  const response = { ...result, call_id: parsed.data.call_id || null, vehicle: { year: parsed.data.vehicle_year || null, model: parsed.data.vehicle_model, mileage: parsed.data.vehicle_mileage || null }, service_label: parsed.data.service_label || null, service_free_text: parsed.data.service_free_text || '', service_concern: parsed.data.service_concern, additional_services: parsed.data.additional_services || 'none', transport_option: parsed.data.transport_option || parsed.data.transportation_plan, transportation_plan: parsed.data.transportation_plan, customer_email: parsed.data.customer_email || null, confirmation_method: parsed.data.confirmation_method || null, sms_consent: parsed.data.sms_consent ?? null, consent_recorded: parsed.data.consent_recorded ?? null, scheduler_url: SCHEDULER_URL };
   inMemoryRequests.set(key, response);
   res.status(200).json(response);
 });
@@ -415,5 +446,5 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Brandon Honda booking service listening on ${PORT} in ${MODE} mode`);
+  console.log(`Brandon Honda booking service listening on ${PORT} with LIVE_BOOKING_ENABLED=${LIVE_BOOKING_ENABLED}`);
 });
