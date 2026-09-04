@@ -342,35 +342,40 @@ const AFTER_HOURS_SLOT = 'Before 06:00am';
 async function listTimesInTransportRow(frame, transport) {
   return frame.evaluate(({ transport }) => {
     const compact = s => (s || '').replace(/\s+/g, ' ').trim();
-    const norm = s => compact(s).toLowerCase();
+    const norm = s => compact(s).toLowerCase().replace(/\.$/, '');
     const timeRe = /^(0?\d|1[0-2]):[0-5]\d\s?(am|pm)$/i;
+    const afterRe = /^before 0?6:00\s?am$/i;
     const isVisible = el => { const r = el.getBoundingClientRect(); const st = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden'; };
     const isDisabled = el => Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
     const known = ['i am dropping off my vehicle', 'i am leaving my vehicle after hours', 'i am waiting with my vehicle', 'i will take the shuttle'];
-    const desired = norm(transport).replace(/\.$/, '');
-    const timesWithin = root => Array.from(root.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a, li'))
-      .filter(el => isVisible(el) && !isDisabled(el))
-      .map(el => compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''))
-      .filter(t => timeRe.test(t) || /^before 0?6:00\s?am$/i.test(t));
-    const labels = Array.from(document.querySelectorAll('button, [role="button"], a, li, label, div, span, p, h1, h2, h3, h4'))
-      .map(el => ({ el, text: compact(el.innerText || el.textContent || '') }))
-      .filter(x => x.text && x.text.length <= 1600 && isVisible(x.el) && norm(x.text).includes(desired))
-      .map(x => ({ ...x, others: known.filter(k => k !== desired && norm(x.text).includes(k)).length }))
-      .sort((a, b) => a.others - b.others || a.text.length - b.text.length);
-    const allRows = known.filter(k => norm(document.body.innerText || '').includes(k));
-    const allTimes = timesWithin(document.body);
-    for (const label of labels) {
-      let node = label.el;
-      for (let depth = 0; node && depth <= 10; depth++, node = node.parentElement) {
-        const t = norm(node.innerText || node.textContent || '');
-        if (!t.includes(desired)) continue;
-        // stop before an ancestor that also contains another transport row: that is the whole grid
-        if (known.some(k => k !== desired && t.includes(k))) break;
-        const times = Array.from(new Set(timesWithin(node)));
-        if (times.length) return { ok: true, transportMatched: label.text, times, rowsOnScreen: allRows, allTimeCount: allTimes.length };
-      }
+    const desired = norm(transport);
+    // 1. one label element per transport row: the smallest visible element whose whole text is that label
+    const all = Array.from(document.querySelectorAll('body *')).filter(el => !['SCRIPT', 'STYLE'].includes(el.tagName) && isVisible(el));
+    const labels = [];
+    for (const k of known) {
+      const cands = all.map(el => ({ el, text: norm(el.innerText || el.textContent || '') })).filter(x => x.text === k);
+      if (cands.length) labels.push({ key: k, el: cands.sort((a, b) => (a.el.innerText || '').length - (b.el.innerText || '').length)[0].el });
     }
-    return { ok: false, reason: labels.length ? 'row_found_no_times' : 'transport_row_not_found', transport, rowsOnScreen: allRows, allTimeCount: allTimes.length, sampleTimes: allTimes.slice(0, 8) };
+    // 2. every visible enabled time control, in document order
+    const timeEls = Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a, li, div, span'))
+      .filter(el => isVisible(el) && !isDisabled(el))
+      .map(el => ({ el, text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '') }))
+      .filter(x => (timeRe.test(x.text) || afterRe.test(x.text)) && !Array.from(x.el.children).some(c => timeRe.test(compact(c.innerText || '')) || afterRe.test(compact(c.innerText || ''))));
+    const rowsOnScreen = labels.map(l => l.key);
+    if (!labels.some(l => l.key === desired)) return { ok: false, reason: 'transport_row_not_found', transport, rowsOnScreen, allTimeCount: timeEls.length };
+    // 3. assign each time to the last row label that precedes it in document order
+    const byRow = Object.fromEntries(known.map(k => [k, []]));
+    for (const t of timeEls) {
+      let owner = null;
+      for (const l of labels) {
+        if (l.el.compareDocumentPosition(t.el) & Node.DOCUMENT_POSITION_FOLLOWING) owner = l.key;
+      }
+      if (owner) byRow[owner].push(t.text);
+    }
+    const times = Array.from(new Set(byRow[desired]));
+    const counts = Object.fromEntries(Object.entries(byRow).map(([k, v]) => [k, v.length]));
+    if (!times.length) return { ok: false, reason: 'row_found_no_times', transport, rowsOnScreen, allTimeCount: timeEls.length, counts };
+    return { ok: true, transportMatched: desired, times, rowsOnScreen, allTimeCount: timeEls.length, counts };
   }, { transport });
 }
 
@@ -422,7 +427,7 @@ export async function collectAvailability(sessionId, input = {}) {
       }, { expected: String(expectText).toLowerCase(), absent }, { timeout: waitMs }).catch(() => {});
       const t = await text();
       const ok = absent ? !has(t, expectText) : has(t, expectText);
-      if (ok) { note(step.pattern || step.selector || step.type, { attempt: i + 1, result: r.ok }); return true; }
+      if (ok) { note(step.pattern || step.selector || step.type, { attempt: i + 1, result: r.ok, reason: r.reason }); return true; }
       if (r.ok === false && r.reason === 'not_found' && i >= 1) break;
     }
     const snap = await snapshot(page).catch(() => ({}));
