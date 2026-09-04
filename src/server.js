@@ -14,7 +14,7 @@ const ALLOW_LIVE_SUBMIT = process.env.ALLOW_LIVE_SUBMIT === 'true';
 
 const DEALER_NAME = 'Brandon Honda';
 const DEALER_ADDRESS = '9209 E Adamo Dr, Tampa, FL 33619';
-const SCHEDULER_URL = 'https://brandonhonda.com/brandon-honda-service-department/schedule-service/';
+const SCHEDULER_URL = 'https://r7699369.m.reyrey.net/service-portal/?token=FE1B2C28E80E4182A2084EA7EAAEE51C';
 
 app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
@@ -300,7 +300,10 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/', (_req, res) => {
-  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: MODE, public_endpoints: ['/health'], protected_endpoints: ['/availability', '/book-service', '/portal-probe', '/validate-process', '/map-flow', '/mvp-dry-run', '/map-flow-compact', '/next-state', '/sessions/start', '/sessions/:id/step', '/sessions/:id/state', '/sessions/:id/screenshot'] });
+  const routes = app._router.stack
+    .filter(layer => layer.route)
+    .map(layer => ({ path: layer.route.path, methods: Object.keys(layer.route.methods).sort() }));
+  res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: MODE, public_endpoints: ['/health'], routes });
 });
 
 app.post('/availability', requireAuth, (req, res) => {
@@ -346,28 +349,53 @@ app.post('/next-state', requireAuth, async (req, res) => {
 });
 
 app.post('/sessions/start', requireAuth, async (req, res) => {
-  const result = await startSession({ url: req.body?.url || SCHEDULER_URL });
-  res.status(result.ok === false ? 500 : 200).json(result);
+  try {
+    const result = await startSession({ url: req.body?.url || SCHEDULER_URL });
+    res.status(result.ok === false ? 502 : 200).json(result);
+  } catch (err) {
+    console.error('session_start_unhandled', err);
+    res.status(500).json({ ok: false, status: 'session_start_unhandled', error: err?.message || String(err) });
+  }
 });
 
 app.post('/sessions/:id/step', requireAuth, async (req, res) => {
-  const result = await stepSession(req.params.id, req.body?.steps || []);
-  res.status(result.ok ? 200 : 404).json(result);
+  try {
+    const result = await stepSession(req.params.id, req.body?.steps || []);
+    res.status(result.ok ? 200 : result.status === 'session_not_found' ? 404 : 400).json(result);
+  } catch (err) {
+    console.error('session_step_unhandled', err);
+    res.status(500).json({ ok: false, status: 'session_step_unhandled', error: err?.message || String(err) });
+  }
 });
 
 app.get('/sessions/:id/state', requireAuth, async (req, res) => {
-  const result = await getSessionState(req.params.id);
-  res.status(result.ok ? 200 : 404).json(result);
+  try {
+    const result = await getSessionState(req.params.id);
+    res.status(result.ok ? 200 : result.status === 'session_not_found' ? 404 : 400).json(result);
+  } catch (err) {
+    console.error('session_state_unhandled', err);
+    res.status(500).json({ ok: false, status: 'session_state_unhandled', error: err?.message || String(err) });
+  }
 });
 
 app.get('/sessions/:id/screenshot', requireAuth, async (req, res) => {
-  const result = await screenshotSession(req.params.id);
-  res.status(result.ok ? 200 : 404).json(result);
+  try {
+    const result = await screenshotSession(req.params.id);
+    res.status(result.ok ? 200 : result.status === 'session_not_found' ? 404 : 400).json(result);
+  } catch (err) {
+    console.error('session_screenshot_unhandled', err);
+    res.status(500).json({ ok: false, status: 'session_screenshot_unhandled', error: err?.message || String(err) });
+  }
 });
 
 app.delete('/sessions/:id', requireAuth, async (req, res) => {
-  const result = await closeSession(req.params.id);
-  res.status(result.ok ? 200 : 404).json(result);
+  try {
+    const result = await closeSession(req.params.id);
+    res.status(result.ok ? 200 : 404).json(result);
+  } catch (err) {
+    console.error('session_close_unhandled', err);
+    res.status(500).json({ ok: false, status: 'session_close_unhandled', error: err?.message || String(err) });
+  }
 });
 
 app.post('/book-service', requireAuth, async (req, res) => {
