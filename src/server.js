@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
-import { startSession, stepSession, getSessionState, screenshotSession, closeSession } from './sessionDriver.js';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -44,6 +44,10 @@ const bookingSchema = z.object({
 });
 
 const availabilitySchema = z.object({
+  operation: z.string().optional(),
+  call_id: z.string().optional(),
+  session_id: z.string().optional(),
+  dealer: z.string().optional(),
   vehicle_year: z.union([z.string(), z.number()]).optional(),
   vehicle_model: z.string().optional(),
   vehicle_mileage: z.union([z.string(), z.number()]).optional(),
@@ -325,7 +329,7 @@ async function bookWithPortal(input) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'brandon-honda-booking-service', mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: LIVE_BOOKING_ENABLED });
+  res.json({ ok: true, service: 'brandon-honda-booking-service', mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: LIVE_BOOKING_ENABLED, liveAvailabilityEnabled: LIVE_AVAILABILITY_ENABLED });
 });
 
 app.get('/', (_req, res) => {
@@ -335,10 +339,49 @@ app.get('/', (_req, res) => {
   res.json({ service: 'brandon-honda-booking-service', dealer: DEALER_NAME, scheduler_url: SCHEDULER_URL, mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', public_endpoints: ['/health'], routes });
 });
 
-app.post('/availability', requireAuth, (req, res) => {
+const LIVE_AVAILABILITY_ENABLED = process.env.LIVE_AVAILABILITY_ENABLED !== 'false';
+
+// Read-only. Walks the (pre-warmed) portal session to the time grid for the caller's date and
+// transport row and returns the open times in the portal's own format (e.g. "09:30am").
+// Never reaches the review screen; never touches ADD APPOINTMENT. Fails closed: anything
+// other than a positively extracted slot list returns success:false, and the Bland pathway
+// routes that to a transfer.
+app.post('/availability', requireAuth, async (req, res) => {
   const parsed = availabilitySchema.safeParse(req.body || {});
   if (!parsed.success) return res.status(400).json({ success: false, message: 'Invalid availability payload', issues: parsed.error.issues });
-  res.status(200).json({ success: false, status: 'availability_not_live', slots: [], available_slots: [], message: 'Live Reynolds availability extraction is not enabled yet.', dealer: DEALER_NAME, address: DEALER_ADDRESS });
+  const input = parsed.data;
+  const base = { dealer: DEALER_NAME, address: DEALER_ADDRESS, date: input.preferred_date || null, transport_option: input.transport_option || input.transportation_plan || null, call_id: input.call_id || null };
+  if (!LIVE_AVAILABILITY_ENABLED) {
+    return res.status(200).json({ ...base, success: false, status: 'availability_disabled', slots: [], available_slots: [], message: 'Live availability is disabled by LIVE_AVAILABILITY_ENABLED=false.' });
+  }
+  if (!input.preferred_date) {
+    return res.status(200).json({ ...base, success: false, status: 'missing_date', slots: [], available_slots: [], message: 'preferred_date (MM/DD/YYYY) is required.' });
+  }
+  const debug = String(req.query?.debug || req.body?.debug || '') === '1';
+  try {
+    const result = await collectAvailability(input.session_id, input);
+    const slots = Array.isArray(result.slots) ? result.slots : [];
+    const success = Boolean(result.ok) && slots.length > 0;
+    const body = {
+      ...base,
+      success,
+      status: success ? 'availability_live' : (result.ok ? 'no_openings' : result.status),
+      slots,
+      available_slots: slots,
+      session_id: result.session_id || input.session_id || null,
+      transport_matched: result.transport_matched || null,
+      message: success
+        ? `${slots.length} open time${slots.length === 1 ? '' : 's'} on ${input.preferred_date} for ${base.transport_option}.`
+        : (result.ok ? `No open times on ${input.preferred_date} for ${base.transport_option}.` : `Could not read availability from the scheduler (${result.status}). Transfer caller to the service team.`),
+      elapsed_ms: result.elapsed_ms || null
+    };
+    if (debug || !success) body.debug = { trace: result.trace, last_screen_text: result.last_screen_text, error: result.error, detail: result.detail };
+    console.log(JSON.stringify({ event: 'availability', call_id: input.call_id || null, success, status: body.status, count: slots.length, elapsed_ms: body.elapsed_ms, trace: result.trace }));
+    res.status(200).json(body);
+  } catch (err) {
+    console.error('availability_unhandled', err);
+    res.status(200).json({ ...base, success: false, status: 'availability_unhandled', slots: [], available_slots: [], message: 'Availability lookup failed. Transfer caller to the service team.', error: err?.message || String(err) });
+  }
 });
 
 app.get('/portal-probe', requireAuth, async (_req, res) => {
