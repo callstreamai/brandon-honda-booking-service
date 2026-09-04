@@ -118,6 +118,14 @@ async function clickText(frame, pattern, opts = {}) {
     await candidate.loc.click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
     return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled };
   } catch (err) {
+    if (opts.acceptIfTextAppears) {
+      await frame.page().waitForTimeout(opts.postClickSettleMs || 1500).catch(() => {});
+      const expected = String(opts.acceptIfTextAppears).toLowerCase();
+      const bodyText = await frame.evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+      if (bodyText.toLowerCase().includes(expected)) {
+        return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled, warning: 'click_failed_but_expected_text_appeared', expectedText: opts.acceptIfTextAppears, error: serializeError(err) };
+      }
+    }
     return { ok: false, type: 'clickText', pattern, reason: 'click_failed', target: { text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled }, error: serializeError(err) };
   }
 }
@@ -238,7 +246,7 @@ async function applyStep(page, step) {
   if (step.finalSubmit === true && process.env.ALLOW_LIVE_SUBMIT !== 'true') {
     return { ok: false, type: 'blockedFinalSubmit', reason: 'ALLOW_LIVE_SUBMIT is not true' };
   }
-  if (step.type === 'clickText') return clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS) });
+  if (step.type === 'clickText') return clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS), acceptIfTextAppears: step.acceptIfTextAppears, postClickSettleMs: step.postClickSettleMs });
   if (step.type === 'clickSelector') return clickSelector(frame, step.selector, step.index || 0, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
   if (step.type === 'clickNearbyInput') return clickNearbyInput(frame, step.pattern, step.inputType || 'checkbox');
   if (step.type === 'clickTimeInTransportRow') return clickTimeInTransportRow(frame, step.transport, step.time, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
