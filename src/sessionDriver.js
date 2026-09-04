@@ -119,7 +119,7 @@ async function clickText(frame, pattern, opts = {}) {
   if (!candidate) return { ok: false, type: 'clickText', pattern, reason: 'not_found' };
   if (candidate.error) return { ok: false, type: 'clickText', pattern, reason: candidate.error, candidates: candidate.candidates };
   try {
-    await candidate.loc.click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
+    await candidate.loc.click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS, force: Boolean(opts.force) });
     return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled };
   } catch (err) {
     if (opts.acceptIfTextAppears) {
@@ -374,8 +374,13 @@ async function listTimesInTransportRow(frame, transport) {
     }
     const times = Array.from(new Set(byRow[desired]));
     const counts = Object.fromEntries(Object.entries(byRow).map(([k, v]) => [k, v.length]));
+    // run-length encoded document order of labels (L) and time controls (T), for debugging row layout
+    const items = [...labels.map(l => ({ el: l.el, tag: 'L:' + l.key.split(' ').slice(2, 4).join('_') })), ...timeEls.map(t => ({ el: t.el, tag: afterRe.test(t.text) ? 'A' : 'T' }))]
+      .sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
+    const sequence = []; for (const it of items) { const last = sequence[sequence.length - 1]; if (last && last.tag === it.tag) last.n++; else sequence.push({ tag: it.tag, n: 1 }); }
+    const seq = sequence.map(x => x.n > 1 ? `${x.tag}x${x.n}` : x.tag).join(' ');
     if (!times.length) return { ok: false, reason: 'row_found_no_times', transport, rowsOnScreen, allTimeCount: timeEls.length, counts };
-    return { ok: true, transportMatched: desired, times, rowsOnScreen, allTimeCount: timeEls.length, counts };
+    return { ok: true, transportMatched: desired, times, rowsOnScreen, allTimeCount: timeEls.length, counts, seq };
   }, { transport });
 }
 
@@ -453,7 +458,8 @@ export async function collectAvailability(sessionId, input = {}) {
       if (!has(await text(), 'Select Model')) {
         if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(year) + '$' }, 'Select Model', { attempts: 3, waitMs: 1200 })) return fail('year_not_available', { year });
       }
-      if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(modelLabel) + '$' }, 'Estimated Mileage', { attempts: 3 })) return fail('model_not_available_for_year', { year, model: modelLabel });
+      await page.waitForLoadState('networkidle', { timeout: 1500 }).catch(() => {});
+      if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(modelLabel) + '$', timeoutMs: 5000 }, 'Estimated Mileage', { attempts: 3 })) return fail('model_not_available_for_year', { year, model: modelLabel });
     }
     // 3. mileage + PROCEED (second known click race)
     t = await text();
@@ -479,7 +485,7 @@ export async function collectAvailability(sessionId, input = {}) {
       }
       // the footer reads SKIP until a service is selected; never click SKIP. The mileage screen's
       // own Proceed is still mounted underneath, so take the LAST matching footer button.
-      if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true }, 'ANY ADVISOR', { waitMs: 2500 })) return fail('service_proceed_failed');
+      if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true, force: true, timeoutMs: 4000 }, 'ANY ADVISOR', { waitMs: 2500 })) return fail('service_proceed_failed');
     }
     // 5. adaptive walk: advisor -> date -> time grid (screen order confirmed at runtime; see trace)
     let advisorDone = false;
@@ -497,7 +503,7 @@ export async function collectAvailability(sessionId, input = {}) {
           return done(row.ok ? [AFTER_HOURS_SLOT] : [], row);
         }
         const row = await listTimesInTransportRow(frame, transport);
-        note('time_grid', { rowOk: row.ok, reason: row.reason, count: row.times ? row.times.length : 0, rowsOnScreen: row.rowsOnScreen, allTimeCount: row.allTimeCount });
+        note('time_grid', { rowOk: row.ok, reason: row.reason, count: row.times ? row.times.length : 0, counts: row.counts, seq: row.seq, allTimeCount: row.allTimeCount });
         if (!row.ok) return fail('transport_row_not_found', { detail: row });
         return done(row.times, row);
       }
@@ -508,7 +514,7 @@ export async function collectAvailability(sessionId, input = {}) {
         let r = await applyStep(page, { type: 'clickCheckboxNearText', pattern: '^ANY ADVISOR$' });
         if (r.ok === false) r = await applyStep(page, { type: 'clickAnyText', pattern: '^ANY ADVISOR$' });
         note('advisor', { selected: r.ok, checked: r.checked, reason: r.reason, header: body.slice(0, 120) });
-        if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true }, 'would you like to see a certain advisor', { absent: true, waitMs: 2500 })) return fail('advisor_proceed_failed');
+        if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true, force: true, timeoutMs: 4000 }, 'would you like to see a certain advisor', { absent: true, waitMs: 2500 })) return fail('advisor_proceed_failed');
         continue;
       }
       // date screen: a month header plus day-number buttons, or a date input
@@ -570,7 +576,7 @@ async function applyStep(page, step) {
     return { ok: false, type: 'blockedFinalSubmit', reason: 'LIVE_BOOKING_ENABLED is not true' };
   }
   if (step.type === 'clickText') {
-    const r = await clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS), acceptIfTextAppears: step.acceptIfTextAppears, postClickSettleMs: step.postClickSettleMs });
+    const r = await clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS), acceptIfTextAppears: step.acceptIfTextAppears, postClickSettleMs: step.postClickSettleMs, force: step.force });
     if (r.ok !== false || step.noFallback) return r;
     // not a button/link/label: fall back to any visible element with that text
     const alt = await clickAnyText(frame, step.pattern, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
