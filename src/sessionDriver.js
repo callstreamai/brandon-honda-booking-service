@@ -13,6 +13,10 @@ function wsEndpoint() {
   return `wss://${region}/chromium?token=${encodeURIComponent(token)}&timeout=300000&blockAds=true`;
 }
 
+export function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function serializeError(err) {
   return {
     name: err?.name || 'Error',
@@ -251,6 +255,227 @@ async function clickTimeInTransportRow(frame, transport, time, opts = {}) {
       document.querySelectorAll(`[data-kafka-slot-target="${marker}"]`).forEach(el => el.removeAttribute('data-kafka-slot-target'));
     }, marker).catch(() => {});
     return { ok: false, type: 'clickTimeInTransportRow', reason: 'click_failed', transportRequested: transport, timeRequested: time, found, error: serializeError(err) };
+  }
+}
+
+const TIME_RE = /^(0?\d|1[0-2]):[0-5]\d\s?(am|pm)$/i;
+const AFTER_HOURS_LABEL = 'i am leaving my vehicle after hours';
+const AFTER_HOURS_SLOT = 'Before 06:00am';
+
+// Lists the visible, enabled time buttons that sit inside the requested transport row.
+// Same ancestor-walk as clickTimeInTransportRow, so a slot returned here is a slot that
+// clickTimeInTransportRow can later click for the same row.
+async function listTimesInTransportRow(frame, transport) {
+  return frame.evaluate(({ transport }) => {
+    const compact = s => (s || '').replace(/\s+/g, ' ').trim();
+    const norm = s => compact(s).toLowerCase();
+    const timeRe = /^(0?\d|1[0-2]):[0-5]\d\s?(am|pm)$/i;
+    const isVisible = el => { const r = el.getBoundingClientRect(); const st = window.getComputedStyle(el); return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden'; };
+    const isDisabled = el => Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
+    const known = ['i am dropping off my vehicle', 'i am leaving my vehicle after hours', 'i am waiting with my vehicle', 'i will take the shuttle'];
+    const desired = norm(transport).replace(/\.$/, '');
+    const timesWithin = root => Array.from(root.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a, li'))
+      .filter(el => isVisible(el) && !isDisabled(el))
+      .map(el => compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''))
+      .filter(t => timeRe.test(t) || /^before 0?6:00\s?am$/i.test(t));
+    const labels = Array.from(document.querySelectorAll('button, [role="button"], a, li, label, div, span, p, h1, h2, h3, h4'))
+      .map(el => ({ el, text: compact(el.innerText || el.textContent || '') }))
+      .filter(x => x.text && x.text.length <= 1600 && isVisible(x.el) && norm(x.text).includes(desired))
+      .map(x => ({ ...x, others: known.filter(k => k !== desired && norm(x.text).includes(k)).length }))
+      .sort((a, b) => a.others - b.others || a.text.length - b.text.length);
+    const allRows = known.filter(k => norm(document.body.innerText || '').includes(k));
+    const allTimes = timesWithin(document.body);
+    for (const label of labels) {
+      let node = label.el;
+      for (let depth = 0; node && depth <= 10; depth++, node = node.parentElement) {
+        const t = norm(node.innerText || node.textContent || '');
+        if (!t.includes(desired)) continue;
+        // stop before an ancestor that also contains another transport row: that is the whole grid
+        if (known.some(k => k !== desired && t.includes(k))) break;
+        const times = Array.from(new Set(timesWithin(node)));
+        if (times.length) return { ok: true, transportMatched: label.text, times, rowsOnScreen: allRows, allTimeCount: allTimes.length };
+      }
+    }
+    return { ok: false, reason: labels.length ? 'row_found_no_times' : 'transport_row_not_found', transport, rowsOnScreen: allRows, allTimeCount: allTimes.length, sampleTimes: allTimes.slice(0, 8) };
+  }, { transport });
+}
+
+function parseUsDate(value) {
+  const m = String(value || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  return { month: Number(m[1]), day: Number(m[2]), year: Number(m[3]) };
+}
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+// Walks a warm session from wherever it is to the time grid for the requested date and
+// transport row, and returns the open times. Read-only: it never reaches the review screen
+// and never touches ADD APPOINTMENT. Leaves the session on the time screen so a later
+// /book-service call can continue from there.
+export async function collectAvailability(sessionId, input = {}) {
+  const trace = [];
+  const t0 = Date.now();
+  let session = sessions.get(sessionId);
+  let startedHere = false;
+  if (!session) {
+    const started = await startSession({});
+    if (!started.ok) return { ok: false, status: 'session_start_failed', error: started.error, trace };
+    session = sessions.get(started.id);
+    startedHere = true;
+  }
+  session.lastUsedAt = Date.now();
+  const page = session.page;
+  const date = parseUsDate(input.preferred_date);
+  if (!date) return { ok: false, status: 'bad_date', message: 'preferred_date must be MM/DD/YYYY', session_id: session.id, trace };
+  const transport = String(input.transport_option || input.transportation_plan || 'I am dropping off my vehicle.');
+  const isAfterHours = transport.toLowerCase().includes(AFTER_HOURS_LABEL);
+  const modelLabel = String(input.vehicle_model || '').trim();
+  const year = String(input.vehicle_year || '').trim();
+  const mileage = String(input.vehicle_mileage || '').replace(/[^\d]/g, '');
+  const serviceLabel = String(input.service_label || '').trim();
+  const freeText = String(input.service_free_text || input.service_concern || '').trim();
+
+  const text = async () => (await getReynoldsFrame(page)).evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+  const has = (t, needle) => t.toLowerCase().includes(String(needle).toLowerCase());
+  const note = (screen, detail) => trace.push({ t: Date.now() - t0, screen, ...detail });
+
+  // click, then insist the screen actually changed (both first clicks are known to swallow a click)
+  async function clickUntil(step, expectText, { absent = false, attempts = 6, waitMs = 1500 } = {}) {
+    for (let i = 0; i < attempts; i++) {
+      const r = await applyStep(page, step);
+      await page.waitForFunction(({ expected, absent }) => {
+        const t = (document.body?.innerText || '').toLowerCase();
+        return absent ? !t.includes(expected) : t.includes(expected);
+      }, { expected: String(expectText).toLowerCase(), absent }, { timeout: waitMs }).catch(() => {});
+      const t = await text();
+      const ok = absent ? !has(t, expectText) : has(t, expectText);
+      if (ok) { note(step.pattern || step.selector || step.type, { attempt: i + 1, result: r.ok }); return true; }
+      if (r.ok === false && r.reason === 'not_found' && i >= 1) break;
+    }
+    note(step.pattern || step.selector || step.type, { failed: true, lastText: (await text()).slice(0, 400) });
+    return false;
+  }
+
+  try {
+    let t = await text();
+    // 1. entry
+    if (has(t, 'Schedule your service appointment') && !has(t, "I'M NEW") && !has(t, 'Select Your Make')) {
+      if (!await clickUntil({ type: 'clickText', pattern: 'Schedule Appointment', pick: 'shortest', firstClick: true }, "I'M NEW")) return fail('entry_failed');
+    }
+    t = await text();
+    if (has(t, "I'M NEW") && !has(t, 'Select Your Make')) {
+      if (!await clickUntil({ type: 'clickText', pattern: "^I'M NEW$", pick: 'shortest', firstClick: true }, 'Select Your Make')) return fail('guest_entry_failed');
+    }
+    // 2. vehicle
+    t = await text();
+    if (has(t, 'Select Your Make')) {
+      if (!await clickUntil({ type: 'clickText', pattern: '^Honda$' }, 'Select Your Make', { absent: true, waitMs: 1200 }) && !has(await text(), year)) return fail('make_failed');
+      if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(year) + '$' }, 'Estimated Mileage', { attempts: 2, waitMs: 800 })) {
+        // year click shows the model list; the model click shows mileage
+        if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(modelLabel) + '$' }, 'Estimated Mileage')) return fail('model_not_available_for_year', { year, model: modelLabel });
+      }
+    }
+    // 3. mileage + PROCEED (second known click race)
+    t = await text();
+    if (has(t, 'Estimated Mileage')) {
+      if (mileage) await applyStep(page, { type: 'fill', selector: '#estMileageText_input', value: mileage });
+      else await applyStep(page, { type: 'clickSelector', selector: '#estMilCheckbox' });
+      if (!await clickUntil({ type: 'clickText', pattern: '^PROCEED$', pick: 'last' }, 'Estimated Mileage', { absent: true })) return fail('mileage_proceed_failed');
+    }
+    // 4. service: exact label checkbox, or TELL US free text
+    t = await text();
+    const onService = has(t, 'TELL US') || has(t, 'OIL CHANGE') || has(t, 'RECALL');
+    if (onService) {
+      if (serviceLabel && serviceLabel.toUpperCase() !== 'TELL US') {
+        const r = await applyStep(page, { type: 'clickNearbyInput', pattern: '^' + escapeRegex(serviceLabel) + '$' });
+        note('service_label', { label: serviceLabel, ok: r.ok, reason: r.reason });
+        if (r.ok === false) return fail('service_label_not_found', { label: serviceLabel });
+      } else {
+        const r1 = await applyStep(page, { type: 'clickText', pattern: 'TELL US', pick: 'shortest' });
+        const r2 = await applyStep(page, { type: 'fill', selector: 'textarea', value: freeText || 'Customer request, see notes' });
+        note('service_tell_us', { tab: r1.ok, filled: r2.ok, reason: r2.reason });
+        if (r2.ok === false) return fail('tell_us_textarea_not_found');
+      }
+      if (!await clickUntil({ type: 'clickText', pattern: '^PROCEED$', pick: 'last' }, 'TELL US', { absent: true })) return fail('service_proceed_failed');
+    }
+    // 5. adaptive walk: advisor -> date -> time grid (screen order confirmed at runtime; see trace)
+    for (let hop = 0; hop < 8; hop++) {
+      const frame = await getReynoldsFrame(page);
+      const st = await snapshot(page);
+      const body = st.text || '';
+      const ctl = (st.controls || []).filter(c => c.visible && !c.disabled);
+      // time grid reached?
+      const timesVisible = ctl.filter(c => TIME_RE.test(c.text) || /^before 0?6:00\s?am$/i.test(c.text));
+      if (timesVisible.length) {
+        if (isAfterHours) {
+          const row = await listTimesInTransportRow(frame, transport);
+          note('time_grid', { afterHours: true, row: row.ok, rowsOnScreen: row.rowsOnScreen });
+          return done(row.ok ? [AFTER_HOURS_SLOT] : [], row);
+        }
+        const row = await listTimesInTransportRow(frame, transport);
+        note('time_grid', { rowOk: row.ok, reason: row.reason, count: row.times ? row.times.length : 0, rowsOnScreen: row.rowsOnScreen, allTimeCount: row.allTimeCount });
+        if (!row.ok) return fail('transport_row_not_found', { detail: row });
+        return done(row.times, row);
+      }
+      // advisor screen
+      const anyAdvisor = ctl.find(c => /any advisor/i.test(c.text));
+      if (anyAdvisor) {
+        await applyStep(page, { type: 'clickText', pattern: 'ANY ADVISOR', pick: 'shortest' });
+        note('advisor', { clicked: true });
+        const proceed = ctl.find(c => /^PROCEED$/i.test(c.text));
+        if (proceed) await applyStep(page, { type: 'clickText', pattern: '^PROCEED$', pick: 'last' });
+        await page.waitForTimeout(800);
+        continue;
+      }
+      // date screen: a month header plus day-number buttons, or a date input
+      const dateInput = (st.fields || []).find(f => f.visible && (f.type === 'date' || /date/i.test(f.id + f.name + f.placeholder)));
+      const dayButtons = ctl.filter(c => /^\d{1,2}$/.test(c.text));
+      const monthShown = MONTHS.findIndex(m => body.toLowerCase().includes(m));
+      if (dateInput || dayButtons.length >= 20) {
+        note('date_screen', { dateInput: dateInput ? dateInput.id : null, dayButtons: dayButtons.length, monthShown: monthShown >= 0 ? MONTHS[monthShown] : null });
+        if (dateInput) {
+          const iso = `${date.year}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+          await applyStep(page, { type: 'fill', selector: dateInput.id ? '#' + dateInput.id : 'input[type="date"]', value: iso });
+        } else {
+          // advance months until the header matches
+          for (let m = 0; m < 6 && monthShown >= 0; m++) {
+            const nowText = (await text()).toLowerCase();
+            const cur = MONTHS.findIndex(mm => nowText.includes(mm));
+            if (cur === date.month - 1) break;
+            const r = await applyStep(page, { type: 'clickText', pattern: '(next|›|>|chevron_right|arrow_forward)', pick: 'shortest' });
+            note('calendar_next', { ok: r.ok, reason: r.reason });
+            if (r.ok === false) break;
+            await page.waitForTimeout(500);
+          }
+          const r = await applyStep(page, { type: 'clickText', pattern: '^' + date.day + '$', pick: 'first' });
+          note('day_click', { day: date.day, ok: r.ok, reason: r.reason });
+          if (r.ok === false) return fail('date_not_selectable', { date: input.preferred_date });
+        }
+        await page.waitForTimeout(800);
+        const after = await snapshot(page);
+        const proceed = (after.controls || []).find(c => c.visible && !c.disabled && /^PROCEED$/i.test(c.text));
+        if (proceed) await applyStep(page, { type: 'clickText', pattern: '^PROCEED$', pick: 'last' });
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      // unknown intermediate screen: try PROCEED once, otherwise stop and report
+      const proceed = ctl.find(c => /^PROCEED$/i.test(c.text));
+      note('unknown_screen', { proceed: Boolean(proceed), text: body.slice(0, 500), controls: ctl.map(c => c.text).slice(0, 25) });
+      if (!proceed) return fail('unrecognized_screen');
+      await applyStep(page, { type: 'clickText', pattern: '^PROCEED$', pick: 'last' });
+      await page.waitForTimeout(1000);
+    }
+    return fail('too_many_screens');
+  } catch (err) {
+    return { ok: false, status: 'availability_exception', error: serializeError(err), session_id: session.id, session_started_here: startedHere, trace };
+  }
+
+  function done(times, row) {
+    return { ok: true, status: 'availability_live', slots: times, transport_matched: row.transportMatched || null, rows_on_screen: row.rowsOnScreen || [], session_id: session.id, session_started_here: startedHere, elapsed_ms: Date.now() - t0, trace };
+  }
+  async function fail(status, extra = {}) {
+    let lastText = '';
+    try { lastText = (await text()).slice(0, 800); } catch (_e) {}
+    return { ok: false, status, ...extra, last_screen_text: lastText, session_id: session.id, session_started_here: startedHere, elapsed_ms: Date.now() - t0, trace };
   }
 }
 
