@@ -2,13 +2,23 @@ import { chromium } from 'playwright-core';
 import crypto from 'crypto';
 
 const sessions = new Map();
-const DEFAULT_URL = 'https://brandonhonda.com/brandon-honda-service-department/schedule-service/';
+const DEFAULT_URL = 'https://r7699369.m.reyrey.net/service-portal/?token=FE1B2C28E80E4182A2084EA7EAAEE51C';
+const DEFAULT_CLICK_TIMEOUT_MS = 15000;
+const FIRST_CLICK_TIMEOUT_MS = 30000;
 
 function wsEndpoint() {
   const token = process.env.BROWSERLESS_API_KEY;
   const region = process.env.BROWSERLESS_REGION || 'production-sfo.browserless.io';
   if (!token) throw new Error('BROWSERLESS_API_KEY is not configured');
   return `wss://${region}/chromium?token=${encodeURIComponent(token)}&timeout=300000&blockAds=true`;
+}
+
+function serializeError(err) {
+  return {
+    name: err?.name || 'Error',
+    message: err?.message || String(err),
+    stack: err?.stack ? String(err.stack).split('\n').slice(0, 6).join('\n') : undefined
+  };
 }
 
 async function getReynoldsFrame(page) {
@@ -73,9 +83,10 @@ async function findControl(frame, pattern, { pick = 'shortest' } = {}) {
     const enabled = await loc.isEnabled().catch(() => true);
     candidates.push({ loc, text, visible, enabled, score: text.length, index: i });
   }
-  let pool = candidates.filter(c => c.visible && c.enabled);
-  if (!pool.length) pool = candidates.filter(c => c.enabled);
-  if (!pool.length) pool = candidates;
+  const pool = candidates.filter(c => c.visible && c.enabled);
+  if (!pool.length) {
+    return { error: 'no_visible_enabled_match', candidates: candidates.map(({ loc, ...rest }) => rest).slice(0, 20) };
+  }
   if (pick === 'last') return pool[pool.length - 1];
   if (pick === 'first') return pool[0];
   return pool.sort((a, b) => a.score - b.score)[0];
@@ -84,17 +95,26 @@ async function findControl(frame, pattern, { pick = 'shortest' } = {}) {
 async function clickText(frame, pattern, opts = {}) {
   const candidate = await findControl(frame, pattern, opts);
   if (!candidate) return { ok: false, type: 'clickText', pattern, reason: 'not_found' };
-  await candidate.loc.click({ timeout: 10000 });
-  return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled };
+  if (candidate.error) return { ok: false, type: 'clickText', pattern, reason: candidate.error, candidates: candidate.candidates };
+  try {
+    await candidate.loc.click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
+    return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled };
+  } catch (err) {
+    return { ok: false, type: 'clickText', pattern, reason: 'click_failed', target: { text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled }, error: serializeError(err) };
+  }
 }
 
-async function clickSelector(frame, selector, index = 0) {
+async function clickSelector(frame, selector, index = 0, opts = {}) {
   const loc = frame.locator(selector).nth(index);
   const count = await frame.locator(selector).count();
   if (!count || index >= count) return { ok: false, type: 'clickSelector', selector, index, count, reason: 'not_found' };
-  await loc.click({ timeout: 10000 });
-  const checked = await loc.isChecked().catch(() => false);
-  return { ok: true, type: 'clickSelector', selector, index, count, checked };
+  try {
+    await loc.click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
+    const checked = await loc.isChecked().catch(() => false);
+    return { ok: true, type: 'clickSelector', selector, index, count, checked };
+  } catch (err) {
+    return { ok: false, type: 'clickSelector', selector, index, count, reason: 'click_failed', error: serializeError(err) };
+  }
 }
 
 async function clickNearbyInput(frame, pattern, inputType = 'checkbox') {
@@ -104,8 +124,12 @@ async function clickNearbyInput(frame, pattern, inputType = 'checkbox') {
     const loc = textLoc.nth(i);
     const input = loc.locator(`input[type="${inputType}"]`).first();
     if (await input.count()) {
-      await input.click({ timeout: 10000 });
-      return { ok: true, type: 'clickNearbyInput', pattern, inputType, textIndex: i, checked: await input.isChecked().catch(() => false) };
+      try {
+        await input.click({ timeout: DEFAULT_CLICK_TIMEOUT_MS });
+        return { ok: true, type: 'clickNearbyInput', pattern, inputType, textIndex: i, checked: await input.isChecked().catch(() => false) };
+      } catch (err) {
+        return { ok: false, type: 'clickNearbyInput', pattern, inputType, textIndex: i, reason: 'click_failed', error: serializeError(err) };
+      }
     }
   }
   return { ok: false, type: 'clickNearbyInput', pattern, inputType, reason: 'not_found' };
@@ -114,8 +138,12 @@ async function clickNearbyInput(frame, pattern, inputType = 'checkbox') {
 async function fill(frame, selector, value) {
   const loc = frame.locator(selector).first();
   if (!(await loc.count())) return { ok: false, type: 'fill', selector, reason: 'not_found' };
-  await loc.fill(String(value), { timeout: 10000 });
-  return { ok: true, type: 'fill', selector, value: String(value) };
+  try {
+    await loc.fill(String(value), { timeout: 10000 });
+    return { ok: true, type: 'fill', selector, value: String(value) };
+  } catch (err) {
+    return { ok: false, type: 'fill', selector, value: String(value), reason: 'fill_failed', error: serializeError(err) };
+  }
 }
 
 async function applyStep(page, step) {
@@ -123,23 +151,29 @@ async function applyStep(page, step) {
   if (step.finalSubmit === true && process.env.ALLOW_LIVE_SUBMIT !== 'true') {
     return { ok: false, type: 'blockedFinalSubmit', reason: 'ALLOW_LIVE_SUBMIT is not true' };
   }
-  if (step.type === 'clickText') return clickText(frame, step.pattern, { pick: step.pick || 'shortest' });
-  if (step.type === 'clickSelector') return clickSelector(frame, step.selector, step.index || 0);
+  if (step.type === 'clickText') return clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS) });
+  if (step.type === 'clickSelector') return clickSelector(frame, step.selector, step.index || 0, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
   if (step.type === 'clickNearbyInput') return clickNearbyInput(frame, step.pattern, step.inputType || 'checkbox');
   if (step.type === 'fill') return fill(frame, step.selector, step.value);
   return { ok: false, reason: 'unknown_step_type', step };
 }
 
 export async function startSession({ url = DEFAULT_URL } = {}) {
-  const browser = await chromium.connectOverCDP(wsEndpoint());
-  const context = browser.contexts()[0] || await browser.newContext();
-  const page = context.pages()[0] || await context.newPage();
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await page.waitForTimeout(2500);
-  await getReynoldsFrame(page);
-  const id = crypto.randomUUID();
-  sessions.set(id, { id, browser, context, page, createdAt: Date.now(), lastUsedAt: Date.now() });
-  return { id, state: await snapshot(page) };
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP(wsEndpoint());
+    const context = browser.contexts()[0] || await browser.newContext();
+    const page = context.pages()[0] || await context.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.waitForTimeout(2500);
+    await getReynoldsFrame(page);
+    const id = crypto.randomUUID();
+    sessions.set(id, { id, browser, context, page, createdAt: Date.now(), lastUsedAt: Date.now() });
+    return { ok: true, id, state: await snapshot(page) };
+  } catch (err) {
+    await browser?.close().catch(() => {});
+    return { ok: false, status: 'start_failed', error: serializeError(err) };
+  }
 }
 
 export async function stepSession(id, steps = []) {
@@ -147,27 +181,45 @@ export async function stepSession(id, steps = []) {
   if (!session) return { ok: false, status: 'session_not_found' };
   session.lastUsedAt = Date.now();
   const results = [];
-  for (const step of steps) {
-    const result = await applyStep(session.page, step);
-    results.push({ step, result });
-    await session.page.waitForTimeout(step.waitMs || 1200);
-    if (result.ok === false) break;
+  try {
+    for (const step of steps) {
+      let result;
+      try {
+        result = await applyStep(session.page, step);
+      } catch (err) {
+        result = { ok: false, reason: 'step_exception', error: serializeError(err) };
+      }
+      results.push({ step, result });
+      await session.page.waitForTimeout(step.waitMs || 1200);
+      if (result.ok === false) break;
+    }
+    return { ok: true, status: 'stepped', id, results, state: await snapshot(session.page) };
+  } catch (err) {
+    return { ok: false, status: 'step_failed', id, results, error: serializeError(err) };
   }
-  return { ok: true, status: 'stepped', id, results, state: await snapshot(session.page) };
 }
 
 export async function getSessionState(id) {
   const session = sessions.get(id);
   if (!session) return { ok: false, status: 'session_not_found' };
   session.lastUsedAt = Date.now();
-  return { ok: true, id, state: await snapshot(session.page) };
+  try {
+    return { ok: true, id, state: await snapshot(session.page) };
+  } catch (err) {
+    return { ok: false, status: 'state_failed', id, error: serializeError(err) };
+  }
 }
 
 export async function screenshotSession(id) {
   const session = sessions.get(id);
   if (!session) return { ok: false, status: 'session_not_found' };
-  const screenshot = await session.page.screenshot({ encoding: 'base64', fullPage: false });
-  return { ok: true, id, screenshot };
+  session.lastUsedAt = Date.now();
+  try {
+    const screenshot = await session.page.screenshot({ encoding: 'base64', fullPage: false });
+    return { ok: true, id, screenshot };
+  } catch (err) {
+    return { ok: false, status: 'screenshot_failed', id, error: serializeError(err) };
+  }
 }
 
 export async function closeSession(id) {
