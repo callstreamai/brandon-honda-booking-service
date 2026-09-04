@@ -77,41 +77,31 @@ async function snapshot(page) {
 
 async function findControl(frame, pattern, { pick = 'shortest' } = {}) {
   const re = new RegExp(pattern, 'i');
-  const roleButtons = frame.getByRole('button', { name: re });
-  const buttonCount = await roleButtons.count().catch(() => 0);
-  const roleCandidates = [];
-  for (let i = 0; i < buttonCount; i++) {
-    const loc = roleButtons.nth(i);
-    const text = ((await loc.innerText({ timeout: 1500 }).catch(async () => await loc.getAttribute('aria-label', { timeout: 800 }).catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
-    const visible = await loc.isVisible().catch(() => false);
-    const enabled = await loc.isEnabled().catch(() => true);
-    roleCandidates.push({ loc, text, visible, enabled, score: text.length, index: i, strategy: 'role:button' });
-  }
-  let rolePool = roleCandidates.filter(c => c.visible && c.enabled);
-  if (rolePool.length) {
-    if (pick === 'last') return rolePool[rolePool.length - 1];
-    if (pick === 'first') return rolePool[0];
-    return rolePool.sort((a, b) => a.score - b.score)[0];
-  }
-
-  const controls = frame.locator('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]').filter({ hasText: re });
-  const count = await controls.count();
-  const candidates = [...roleCandidates];
-  if (!count && !candidates.length) return null;
-  for (let i = 0; i < count; i++) {
-    const loc = controls.nth(i);
-    const text = ((await loc.innerText({ timeout: 1500 }).catch(async () => await loc.getAttribute('aria-label', { timeout: 800 }).catch(() => '') || '')) || '').replace(/\s+/g, ' ').trim();
-    const visible = await loc.isVisible().catch(() => false);
-    const enabled = await loc.isEnabled().catch(() => true);
-    candidates.push({ loc, text, visible, enabled, score: text.length, index: i, strategy: 'generic' });
-  }
-  const pool = candidates.filter(c => c.visible && c.enabled);
-  if (!pool.length) {
-    return { error: 'no_visible_enabled_match', candidates: candidates.map(({ loc, ...rest }) => rest).slice(0, 20) };
-  }
-  if (pick === 'last') return pool[pool.length - 1];
-  if (pick === 'first') return pool[0];
-  return pool.sort((a, b) => a.score - b.score)[0];
+  // One round-trip per locator: reading each candidate with its own call can wait out a timeout
+  // per element while the portal re-renders, which is where the 30-second stalls came from.
+  const collect = async (locator, strategy) => {
+    const infos = await locator.evaluateAll(els => els.map(el => {
+      const r = el.getBoundingClientRect();
+      const st = window.getComputedStyle(el);
+      const text = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      return {
+        text,
+        visible: r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none',
+        enabled: !(el.disabled || el.getAttribute('aria-disabled') === 'true' || /disabled/i.test(String(el.className || '')))
+      };
+    })).catch(() => []);
+    return infos.map((x, i) => ({ ...x, index: i, score: x.text.length, strategy, loc: locator.nth(i) })).filter(c => c.text && re.test(c.text));
+  };
+  const choose = p => pick === 'last' ? p[p.length - 1] : pick === 'first' ? p[0] : p.slice().sort((a, b) => a.score - b.score)[0];
+  const roleCands = await collect(frame.getByRole('button'), 'role:button');
+  let pool = roleCands.filter(c => c.visible && c.enabled);
+  if (pool.length) return choose(pool);
+  const genCands = await collect(frame.locator('button, a, [role="button"], input[type="button"], input[type="submit"], li, label, [tabindex]'), 'generic');
+  const all = [...roleCands, ...genCands];
+  if (!all.length) return null;
+  pool = genCands.filter(c => c.visible && c.enabled);
+  if (!pool.length) return { error: 'no_visible_enabled_match', candidates: all.map(({ loc, ...rest }) => rest).slice(0, 20) };
+  return choose(pool);
 }
 
 async function clickText(frame, pattern, opts = {}) {
@@ -119,7 +109,7 @@ async function clickText(frame, pattern, opts = {}) {
   if (!candidate) return { ok: false, type: 'clickText', pattern, reason: 'not_found' };
   if (candidate.error) return { ok: false, type: 'clickText', pattern, reason: candidate.error, candidates: candidate.candidates };
   try {
-    await candidate.loc.click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS, force: Boolean(opts.force) });
+    await candidate.loc.click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS, force: opts.force !== false });
     return { ok: true, type: 'clickText', pattern, text: candidate.text, index: candidate.index, visible: candidate.visible, enabled: candidate.enabled };
   } catch (err) {
     if (opts.acceptIfTextAppears) {
@@ -363,15 +353,27 @@ async function listTimesInTransportRow(frame, transport) {
       .filter(x => (timeRe.test(x.text) || afterRe.test(x.text)) && !Array.from(x.el.children).some(c => timeRe.test(compact(c.innerText || '')) || afterRe.test(compact(c.innerText || ''))));
     const rowsOnScreen = labels.map(l => l.key);
     if (!labels.some(l => l.key === desired)) return { ok: false, reason: 'transport_row_not_found', transport, rowsOnScreen, allTimeCount: timeEls.length };
-    // 3. assign each time to the last row label that precedes it in document order
+    // 3. labels are a header block; the grids follow in row order. Cluster the time controls by
+    //    their container, order clusters by document position, and pair cluster i with label i.
+    //    The after-hours row has a single "Before 06:00am" control, which anchors the alignment.
     const byRow = Object.fromEntries(known.map(k => [k, []]));
+    const clusters = [];
     for (const t of timeEls) {
-      let owner = null;
-      for (const l of labels) {
-        if (l.el.compareDocumentPosition(t.el) & Node.DOCUMENT_POSITION_FOLLOWING) owner = l.key;
-      }
-      if (owner) byRow[owner].push(t.text);
+      const parent = t.el.parentElement;
+      const last = clusters[clusters.length - 1];
+      if (last && (last.parent === parent || last.parent.parentElement === parent.parentElement)) last.items.push(t);
+      else clusters.push({ parent, items: [t] });
     }
+    const orderedLabels = labels.slice().sort((x, y) => (x.el.compareDocumentPosition(y.el) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
+    let offset = 0;
+    const afterIdx = clusters.findIndex(c => c.items.some(t => afterRe.test(t.text)));
+    const afterLabelIdx = orderedLabels.findIndex(l => l.key === 'i am leaving my vehicle after hours');
+    if (afterIdx >= 0 && afterLabelIdx >= 0) offset = afterLabelIdx - afterIdx;
+    clusters.forEach((c, i) => {
+      const label = orderedLabels[i + offset];
+      if (label) byRow[label.key].push(...c.items.map(t => t.text));
+    });
+    const clusterSizes = clusters.map(c => c.items.length);
     const times = Array.from(new Set(byRow[desired]));
     const counts = Object.fromEntries(Object.entries(byRow).map(([k, v]) => [k, v.length]));
     // run-length encoded document order of labels (L) and time controls (T), for debugging row layout
@@ -379,8 +381,8 @@ async function listTimesInTransportRow(frame, transport) {
       .sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
     const sequence = []; for (const it of items) { const last = sequence[sequence.length - 1]; if (last && last.tag === it.tag) last.n++; else sequence.push({ tag: it.tag, n: 1 }); }
     const seq = sequence.map(x => x.n > 1 ? `${x.tag}x${x.n}` : x.tag).join(' ');
-    if (!times.length) return { ok: false, reason: 'row_found_no_times', transport, rowsOnScreen, allTimeCount: timeEls.length, counts };
-    return { ok: true, transportMatched: desired, times, rowsOnScreen, allTimeCount: timeEls.length, counts, seq };
+    if (!times.length) return { ok: false, reason: 'row_found_no_times', transport, rowsOnScreen, allTimeCount: timeEls.length, counts, clusterSizes };
+    return { ok: true, transportMatched: desired, times, rowsOnScreen, allTimeCount: timeEls.length, counts, seq, clusterSizes };
   }, { transport });
 }
 
@@ -503,7 +505,7 @@ export async function collectAvailability(sessionId, input = {}) {
           return done(row.ok ? [AFTER_HOURS_SLOT] : [], row);
         }
         const row = await listTimesInTransportRow(frame, transport);
-        note('time_grid', { rowOk: row.ok, reason: row.reason, count: row.times ? row.times.length : 0, counts: row.counts, seq: row.seq, allTimeCount: row.allTimeCount });
+        note('time_grid', { rowOk: row.ok, reason: row.reason, count: row.times ? row.times.length : 0, counts: row.counts, clusterSizes: row.clusterSizes, allTimeCount: row.allTimeCount });
         if (!row.ok) return fail('transport_row_not_found', { detail: row });
         return done(row.times, row);
       }
