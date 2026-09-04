@@ -180,7 +180,10 @@ async function clickTimeInTransportRow(frame, transport, time, opts = {}) {
     const controls = Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a, li, label'));
     const visibleControls = controls.map((el, index) => ({ el, index, text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''), visible: isVisible(el), disabled: isDisabled(el) }))
       .filter(item => item.text && item.visible && !item.disabled);
-    const rowLabels = visibleControls.filter(item => norm(item.text).includes(desiredTransport));
+    const labelElements = Array.from(document.querySelectorAll('button, [role="button"], a, li, label, div, span, p'))
+      .map((el, index) => ({ el, index, text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''), visible: isVisible(el), disabled: isDisabled(el) }))
+      .filter(item => item.text && item.visible && !item.disabled && item.text.length <= 160);
+    const rowLabels = labelElements.filter(item => norm(item.text).includes(desiredTransport));
     const allTimeMatches = visibleControls.filter(item => norm(item.text) === desiredTime);
     const attempts = [];
 
