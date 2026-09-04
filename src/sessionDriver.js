@@ -185,13 +185,22 @@ async function clickTimeInTransportRow(frame, transport, time, opts = {}) {
     const isDisabled = el => Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
     const desiredTransport = norm(transport);
     const desiredTime = norm(time);
+    const knownTransportLabels = [
+      'i am dropping off my vehicle',
+      'i am leaving my vehicle after hours',
+      'i am waiting with my vehicle',
+      'i will take the shuttle'
+    ];
     const controls = Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a, li, label'));
     const visibleControls = controls.map((el, index) => ({ el, index, text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''), visible: isVisible(el), disabled: isDisabled(el) }))
       .filter(item => item.text && item.visible && !item.disabled);
     const labelElements = Array.from(document.querySelectorAll('button, [role="button"], a, li, label, div, span, p'))
       .map((el, index) => ({ el, index, text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''), visible: isVisible(el), disabled: isDisabled(el) }))
       .filter(item => item.text && item.visible && !item.disabled && item.text.length <= 160);
-    const rowLabels = labelElements.filter(item => norm(item.text).includes(desiredTransport));
+    const rowLabels = labelElements
+      .filter(item => norm(item.text).includes(desiredTransport))
+      .map(item => ({ ...item, otherTransportCount: knownTransportLabels.filter(label => label !== desiredTransport && norm(item.text).includes(label)).length }))
+      .sort((a, b) => a.otherTransportCount - b.otherTransportCount || a.text.length - b.text.length);
     const allTimeMatches = visibleControls.filter(item => norm(item.text) === desiredTime);
     const attempts = [];
 
