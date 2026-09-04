@@ -164,6 +164,72 @@ async function fill(frame, selector, value) {
   }
 }
 
+async function clickTimeInTransportRow(frame, transport, time, opts = {}) {
+  const marker = `kafka-slot-${crypto.randomUUID()}`;
+  const found = await frame.evaluate(({ transport, time, marker }) => {
+    const compact = s => (s || '').replace(/\s+/g, ' ').trim();
+    const norm = s => compact(s).toLowerCase();
+    const isVisible = el => {
+      const r = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const isDisabled = el => Boolean(el.disabled) || /disabled/i.test(String(el.className || '')) || el.getAttribute('aria-disabled') === 'true';
+    const desiredTransport = norm(transport);
+    const desiredTime = norm(time);
+    const controls = Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a, li, label'));
+    const visibleControls = controls.map((el, index) => ({ el, index, text: compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || ''), visible: isVisible(el), disabled: isDisabled(el) }))
+      .filter(item => item.text && item.visible && !item.disabled);
+    const rowLabels = visibleControls.filter(item => norm(item.text).includes(desiredTransport));
+    const allTimeMatches = visibleControls.filter(item => norm(item.text) === desiredTime);
+    const attempts = [];
+
+    function ancestorChain(el, maxDepth = 10) {
+      const out = [];
+      let node = el;
+      for (let depth = 0; node && depth <= maxDepth; depth++, node = node.parentElement) out.push(node);
+      return out;
+    }
+
+    function visibleTimeButtonsWithin(root) {
+      return Array.from(root.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a'))
+        .filter(el => compact(el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').toLowerCase() === desiredTime)
+        .filter(el => isVisible(el) && !isDisabled(el));
+    }
+
+    for (const rowLabel of rowLabels) {
+      const chain = ancestorChain(rowLabel.el, 10);
+      for (const ancestor of chain) {
+        const rect = ancestor.getBoundingClientRect();
+        const ancestorText = compact(ancestor.innerText || ancestor.textContent || '');
+        if (!ancestorText || !norm(ancestorText).includes(desiredTransport)) continue;
+        const timeButtons = visibleTimeButtonsWithin(ancestor);
+        attempts.push({ rowLabel: rowLabel.text, ancestorTag: ancestor.tagName.toLowerCase(), ancestorText: ancestorText.slice(0, 300), w: rect.width, h: rect.height, timeCount: timeButtons.length });
+        if (timeButtons.length) {
+          const target = timeButtons[0];
+          target.setAttribute('data-kafka-slot-target', marker);
+          return { ok: true, marker, transportMatched: rowLabel.text, timeMatched: compact(target.innerText || target.textContent || target.value || target.getAttribute('aria-label') || ''), attempts: attempts.slice(0, 20), allTimeMatchCount: allTimeMatches.length };
+        }
+      }
+    }
+    return { ok: false, reason: 'transport_time_not_found', transport, time, rowLabels: rowLabels.map(x => x.text), allTimeMatchCount: allTimeMatches.length, attempts: attempts.slice(0, 20) };
+  }, { transport, time, marker });
+
+  if (!found.ok) return { type: 'clickTimeInTransportRow', ...found };
+  try {
+    await frame.locator(`[data-kafka-slot-target="${marker}"]`).click({ timeout: opts.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
+    await frame.evaluate(marker => {
+      document.querySelectorAll(`[data-kafka-slot-target="${marker}"]`).forEach(el => el.removeAttribute('data-kafka-slot-target'));
+    }, marker).catch(() => {});
+    return { ok: true, type: 'clickTimeInTransportRow', transportRequested: transport, transportMatched: found.transportMatched, timeRequested: time, timeMatched: found.timeMatched, allTimeMatchCount: found.allTimeMatchCount, attempts: found.attempts };
+  } catch (err) {
+    await frame.evaluate(marker => {
+      document.querySelectorAll(`[data-kafka-slot-target="${marker}"]`).forEach(el => el.removeAttribute('data-kafka-slot-target'));
+    }, marker).catch(() => {});
+    return { ok: false, type: 'clickTimeInTransportRow', reason: 'click_failed', transportRequested: transport, timeRequested: time, found, error: serializeError(err) };
+  }
+}
+
 async function applyStep(page, step) {
   const frame = await getReynoldsFrame(page);
   if (step.finalSubmit === true && process.env.ALLOW_LIVE_SUBMIT !== 'true') {
@@ -172,6 +238,7 @@ async function applyStep(page, step) {
   if (step.type === 'clickText') return clickText(frame, step.pattern, { pick: step.pick || 'shortest', timeoutMs: step.timeoutMs || (step.firstClick ? FIRST_CLICK_TIMEOUT_MS : DEFAULT_CLICK_TIMEOUT_MS) });
   if (step.type === 'clickSelector') return clickSelector(frame, step.selector, step.index || 0, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
   if (step.type === 'clickNearbyInput') return clickNearbyInput(frame, step.pattern, step.inputType || 'checkbox');
+  if (step.type === 'clickTimeInTransportRow') return clickTimeInTransportRow(frame, step.transport, step.time, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
   if (step.type === 'fill') return fill(frame, step.selector, step.value);
   return { ok: false, reason: 'unknown_step_type', step };
 }
