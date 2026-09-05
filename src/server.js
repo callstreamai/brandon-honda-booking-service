@@ -445,9 +445,15 @@ app.post('/customer/lookup', requireAuth, async (req, res) => {
   const body = req.body || {};
   const phone = body.phone || body.caller_phone || body.account_phone || '';
   try {
-    const result = await lookupCustomer({ phone, email: body.email });
-    console.log(JSON.stringify({ event: 'customer_lookup', call_id: body.call_id || null, ok: result.ok, status: result.status, found: result.found, vehicles: result.vehicle_count || 0, elapsed_ms: result.elapsed_ms }));
-    res.status(200).json({ ...result, call_id: body.call_id || null });
+    // Bind the caller's own portal session while the lookup runs, so the pre-warm no longer needs
+    // its own pathway step. Both run in parallel; the lookup uses a separate throwaway session.
+    const callId = body.call_id ? String(body.call_id) : undefined;
+    const [result, bound] = await Promise.all([
+      lookupCustomer({ phone, email: body.email }),
+      callId ? acquireBoundSession(callId, SCHEDULER_URL).catch(err => ({ error: { error: String(err?.message || err) } })) : Promise.resolve(null)
+    ]);
+    console.log(JSON.stringify({ event: 'customer_lookup', call_id: callId || null, ok: result.ok, status: result.status, found: result.found, vehicles: result.vehicle_count || 0, elapsed_ms: result.elapsed_ms, session_id: bound && bound.id || null, session_from_pool: bound ? Boolean(bound.fromPool || bound.reused) : null }));
+    res.status(200).json({ ...result, call_id: callId || null, session_id: bound && bound.id || null, session_ok: Boolean(bound && bound.id) });
   } catch (err) {
     console.error('customer_lookup_unhandled', err);
     res.status(500).json({ ok: false, success: false, found: false, status: 'lookup_unhandled', error: err?.message || String(err) });
