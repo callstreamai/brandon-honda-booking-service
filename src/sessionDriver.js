@@ -704,7 +704,7 @@ export async function startSession({ url = DEFAULT_URL } = {}) {
       try {
         const req = res.request();
         const rt = req.resourceType();
-        if (!/reyrey\.net/i.test(req.url()) || !['xhr', 'fetch', 'document'].includes(rt)) return;
+        if (!/reyrey\.net/i.test(req.url()) || !['xhr', 'fetch', 'document', 'script'].includes(rt)) return;
         const ct = (res.headers()['content-type'] || '').toLowerCase();
         let body = null;
         if (/json|text|javascript/.test(ct) && rt !== 'document') { body = (await res.text().catch(() => '')).slice(0, 30000); }
@@ -755,6 +755,27 @@ export async function stepSession(id, steps = []) {
     return { ok: true, status: 'stepped', id, results, state: await snapshot(session.page) };
   } catch (err) {
     return { ok: false, status: 'step_failed', id, results, error: serializeError(err) };
+  }
+}
+
+// Fetches a reyrey.net URL from inside the session's page (same origin, same cookies) and
+// returns either the text or regex-matched snippets. Mapping aid only; host-restricted.
+export async function fetchTextViaSession(id, url, { grep, context = 300, maxSnippets = 20, maxText = 20000 } = {}) {
+  const session = sessions.get(id);
+  if (!session) return { ok: false, status: 'session_not_found' };
+  if (!/^https:\/\/[a-z0-9.-]*reyrey\.net\//i.test(url)) return { ok: false, status: 'host_not_allowed' };
+  session.lastUsedAt = Date.now();
+  try {
+    const text = await session.page.evaluate(async u => { const r = await fetch(u, { credentials: 'include' }); return { status: r.status, text: await r.text() }; }, url);
+    const out = { ok: true, status: text.status, length: text.text.length };
+    if (grep) {
+      const re = new RegExp(grep, 'gi'); const snippets = []; let m;
+      while ((m = re.exec(text.text)) && snippets.length < maxSnippets) { snippets.push({ at: m.index, snippet: text.text.slice(Math.max(0, m.index - context), m.index + context) }); if (m.index === re.lastIndex) re.lastIndex++; }
+      out.snippets = snippets;
+    } else out.text = text.text.slice(0, maxText);
+    return out;
+  } catch (err) {
+    return { ok: false, status: 'fetch_failed', error: serializeError(err) };
   }
 }
 
