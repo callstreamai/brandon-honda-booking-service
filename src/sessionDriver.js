@@ -534,6 +534,15 @@ async function walk(session, input, until = 'grid') {
         const r2 = await applyStep(page, { type: 'fill', selector: 'textarea', value: inp.freeText || 'Customer request, see notes' });
         note('service_tell_us', { tab: r1.ok, filled: r2.ok, reason: r2.reason });
         if (r2.ok === false) return fail('tell_us_textarea_not_found');
+        // The TELL US tab is a two-step form: type the issue, then ADD ISSUE. PROCEED stays disabled
+        // ("Please select a service to continue.") until the issue shows under "Added Issue".
+        if (!has(await text(), 'Added Issue')) {
+          const r3 = await applyStep(page, { type: 'clickText', pattern: '^ADD ISSUE$' });
+          await page.waitForFunction(() => /Added Issue/i.test(document.body?.innerText || ''), null, { timeout: 5000 }).catch(() => {});
+          const added = has(await text(), 'Added Issue');
+          note('service_tell_us_add', { clicked: r3.ok, added });
+          if (!added) return fail('tell_us_add_issue_failed');
+        }
       }
       // the mileage screen's mixed-case 'Proceed' stays mounted; the service footer is uppercase 'PROCEED'
       await page.waitForFunction(() => Array.from(document.querySelectorAll('button, [role="button"]')).some(b => (b.innerText || '').trim() === 'PROCEED' && !b.disabled && b.getBoundingClientRect().height > 0), null, { timeout: 8000 }).catch(() => {});
