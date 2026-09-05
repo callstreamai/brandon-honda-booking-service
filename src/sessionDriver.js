@@ -686,6 +686,17 @@ async function restartSession(session, callId) {
   return got.session;
 }
 
+// Pool-aware session acquisition for the explicit pre-warm endpoint: reuse the call's
+// session if one exists, else claim a warm one (instant) or cold-start.
+export async function acquireBoundSession(callId, url) {
+  const existing = resolveSessionId({ call_id: callId });
+  if (existing) return { id: existing, reused: true };
+  const got = await acquireSession();
+  if (got.error) return { error: got.error };
+  if (callId) bindSessionToCall(got.session.id, callId);
+  return { id: got.session.id, fromPool: Boolean(got.fromPool) };
+}
+
 // Advance as far as the known fields allow (default: through the service menu, or the date
 // screen when a date is known). Returns the promise of the walk; callers may respond without
 // awaiting it, since /availability will wait on the session lock anyway.
