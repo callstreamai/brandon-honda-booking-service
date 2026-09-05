@@ -329,7 +329,7 @@ async function bookWithPortal(input) {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'brandon-honda-booking-service', mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: LIVE_BOOKING_ENABLED, liveAvailabilityEnabled: LIVE_AVAILABILITY_ENABLED });
+  res.json({ ok: true, service: 'brandon-honda-booking-service', mode: LIVE_BOOKING_ENABLED ? 'live_submit' : 'safe', browserlessConfigured: Boolean(BROWSERLESS_API_KEY), liveSubmitEnabled: LIVE_BOOKING_ENABLED, liveAvailabilityEnabled: LIVE_AVAILABILITY_ENABLED, poolSize: Number(process.env.SESSION_POOL_SIZE || '1') });
 });
 
 app.get('/', (_req, res) => {
