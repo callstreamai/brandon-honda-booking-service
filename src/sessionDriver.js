@@ -357,12 +357,17 @@ async function listTimesInTransportRow(frame, transport) {
     //    their container, order clusters by document position, and pair cluster i with label i.
     //    The after-hours row has a single "Before 06:00am" control, which anchors the alignment.
     const byRow = Object.fromEntries(known.map(k => [k, []]));
+    // each grid is an ascending list of times; a time that is not later than the previous one
+    // (or the after-hours pseudo-slot) starts a new grid. Independent of the DOM wrappers.
+    const minutes = txt => { const m = txt.match(/^(0?\d|1[0-2]):([0-5]\d)\s?(am|pm)$/i); if (!m) return -1; let h = Number(m[1]) % 12; if (m[3].toLowerCase() === 'pm') h += 12; return h * 60 + Number(m[2]); };
     const clusters = [];
+    let prev = null;
     for (const t of timeEls) {
-      const parent = t.el.parentElement;
+      const cur = afterRe.test(t.text) ? -1 : minutes(t.text);
       const last = clusters[clusters.length - 1];
-      if (last && (last.parent === parent || last.parent.parentElement === parent.parentElement)) last.items.push(t);
-      else clusters.push({ parent, items: [t] });
+      if (last && prev !== null && prev >= 0 && cur > prev) last.items.push(t);
+      else clusters.push({ items: [t] });
+      prev = cur;
     }
     const orderedLabels = labels.slice().sort((x, y) => (x.el.compareDocumentPosition(y.el) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
     let offset = 0;
@@ -487,7 +492,8 @@ export async function collectAvailability(sessionId, input = {}) {
       }
       // the footer reads SKIP until a service is selected; never click SKIP. The mileage screen's
       // own Proceed is still mounted underneath, so take the LAST matching footer button.
-      if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true, force: true, timeoutMs: 4000 }, 'ANY ADVISOR', { waitMs: 2500 })) return fail('service_proceed_failed');
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('button, [role="button"]')).some(b => /^PROCEED$/i.test((b.innerText || '').trim()) && !b.disabled && b.getBoundingClientRect().height > 0), null, { timeout: 5000 }).catch(() => {});
+      if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true, force: true, timeoutMs: 4000 }, 'ANY ADVISOR', { waitMs: 6000, attempts: 3 })) return fail('service_proceed_failed');
     }
     // 5. adaptive walk: advisor -> date -> time grid (screen order confirmed at runtime; see trace)
     let advisorDone = false;
@@ -541,6 +547,7 @@ export async function collectAvailability(sessionId, input = {}) {
           }
           const r = await applyStep(page, { type: 'clickText', pattern: '^' + date.day + '$', pick: 'first' });
           note('day_click', { day: date.day, ok: r.ok, reason: r.reason });
+          await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 8000 }).catch(() => {});
           if (r.ok === false) return fail('date_not_selectable', { date: input.preferred_date });
         }
         await page.waitForTimeout(800);
