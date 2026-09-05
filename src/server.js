@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
-import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession, acquireBoundSession } from './sessionDriver.js';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession, acquireBoundSession, lookupCustomer } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -437,6 +437,21 @@ app.post('/map-flow-compact', requireAuth, async (req, res) => {
 app.post('/next-state', requireAuth, async (req, res) => {
   const result = await mapFlow(req.body?.steps || [], false);
   res.status(result.ok ? 200 : 400).json(result);
+});
+
+// Account lookup by the phone number on the account (or an email). Uses a throwaway portal
+// session; the caller's own session is untouched. found=false is a normal outcome, not an error.
+app.post('/customer/lookup', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const phone = body.phone || body.caller_phone || body.account_phone || '';
+  try {
+    const result = await lookupCustomer({ phone, email: body.email });
+    console.log(JSON.stringify({ event: 'customer_lookup', call_id: body.call_id || null, ok: result.ok, status: result.status, found: result.found, vehicles: result.vehicle_count || 0, elapsed_ms: result.elapsed_ms }));
+    res.status(200).json({ ...result, call_id: body.call_id || null });
+  } catch (err) {
+    console.error('customer_lookup_unhandled', err);
+    res.status(500).json({ ok: false, success: false, found: false, status: 'lookup_unhandled', error: err?.message || String(err) });
+  }
 });
 
 app.post('/sessions/start', requireAuth, async (req, res) => {
