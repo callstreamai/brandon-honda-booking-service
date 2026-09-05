@@ -611,11 +611,18 @@ async function walk(session, input, until = 'grid') {
           const enabledDay = dayButtons.some(c => c.text === String(inp.date.day));
           const anyDay = (st.controls || []).some(c => c.visible && c.text === String(inp.date.day));
           if (!enabledDay && anyDay) { note('day_disabled', { day: inp.date.day }); return fail('date_not_available', { date: inp.dateKey }); }
-          const r = await applyStep(page, { type: 'clickText', pattern: '^' + inp.date.day + '$', pick: 'first' });
-          note('day_click', { day: inp.date.day, ok: r.ok, reason: r.reason });
-          if (r.ok === false) return fail('date_not_selectable', { date: inp.dateKey });
-          // the grid takes up to ~10 s to render after the day is chosen
-          await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 15000 }).catch(() => {});
+          // Click the day, then wait for the header to name that date (the grid follows it). A click that
+          // lands while the reopened calendar is still animating is ignored, so retry once.
+          const headerRe = new RegExp(`\\b${MONTHS[inp.date.month - 1]}\\s+${inp.date.day}\\b`, 'i');
+          let picked = false;
+          for (let attempt = 0; attempt < 2 && !picked; attempt++) {
+            const r = await applyStep(page, { type: 'clickText', pattern: '^' + inp.date.day + '$', pick: 'first' });
+            note('day_click', { day: inp.date.day, ok: r.ok, reason: r.reason, attempt: attempt + 1 });
+            if (r.ok === false) return fail('date_not_selectable', { date: inp.dateKey });
+            picked = await page.waitForFunction(re => new RegExp(re, 'i').test(document.body?.innerText || '') && !/Which day would you like/i.test(document.body?.innerText || ''), headerRe.source, { timeout: 6000 }).then(() => true).catch(() => false);
+          }
+          // the grid takes a few seconds to render after the day is chosen
+          await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 12000 }).catch(() => {});
         }
         await page.waitForTimeout(500);
         continue;
