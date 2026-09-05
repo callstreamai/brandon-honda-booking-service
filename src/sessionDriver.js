@@ -573,6 +573,15 @@ async function walk(session, input, until = 'grid') {
         if (!row.ok) return fail('transport_row_not_found', { detail: row });
         return done({ slots: isAfterHours ? row.times.filter(x => /^before/i.test(x)) : row.times.filter(x => !/^before/i.test(x)), transport_matched: row.transportMatched, rows_on_screen: row.rowsOnScreen });
       }
+      const dayButtonsNow = ctl.filter(c => /^\d{1,2}$/.test(c.text));
+      if (gridReady && dayButtonsNow.length < 20) {
+        // grid is up for a different day: the date header reopens the calendar in place
+        const r = await applyStep(page, { type: 'clickText', pattern: '^(SUNDAY|MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY), [A-Z]+ \\d{1,2}, \\d{4}$', pick: 'first' });
+        note('reopen_calendar', { ok: r.ok, reason: r.reason, wanted: inp.dateKey });
+        if (r.ok === false) return fail('date_change_failed', { date: inp.dateKey });
+        await page.waitForFunction(() => /Which day would you like/i.test(document.body?.innerText || ''), null, { timeout: 4000 }).catch(() => {});
+        continue;
+      }
       if (/would you like to see a certain advisor/i.test(body) && !advisorDone && !gridReady) {
         advisorDone = true;
         let r = await applyStep(page, { type: 'clickCheckboxNearText', pattern: '^ANY ADVISOR$' });
@@ -599,6 +608,9 @@ async function walk(session, input, until = 'grid') {
             if (r.ok === false) break;
             await page.waitForTimeout(500);
           }
+          const enabledDay = dayButtons.some(c => c.text === String(inp.date.day));
+          const anyDay = (st.controls || []).some(c => c.visible && c.text === String(inp.date.day));
+          if (!enabledDay && anyDay) { note('day_disabled', { day: inp.date.day }); return fail('date_not_available', { date: inp.dateKey }); }
           const r = await applyStep(page, { type: 'clickText', pattern: '^' + inp.date.day + '$', pick: 'first' });
           note('day_click', { day: inp.date.day, ok: r.ok, reason: r.reason });
           if (r.ok === false) return fail('date_not_selectable', { date: inp.dateKey });
@@ -1058,7 +1070,7 @@ export async function closeSession(id) {
 }
 
 setInterval(() => {
-  const cutoff = Date.now() - 15 * 60 * 1000;
+  const cutoff = Date.now() - Number(process.env.SESSION_IDLE_MS || String(6 * 60 * 1000));
   for (const [id, session] of sessions.entries()) {
     if (session.lastUsedAt < cutoff) {
       sessions.delete(id);
