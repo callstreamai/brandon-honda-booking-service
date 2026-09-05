@@ -64,9 +64,13 @@ const inMemoryRequests = new Map();
 function requireAuth(req, res, next) {
   if (!WEBHOOK_SECRET) return next();
   const auth = req.get('authorization') || '';
-  const token = auth.replace(/^Bearer\s+/i, '').trim();
-  if (token !== WEBHOOK_SECRET) return res.status(401).json({ success: false, message: 'Unauthorized' });
-  return next();
+  const headerToken = auth.replace(/^Bearer\s+/i, '').trim();
+  // Bland Webhook nodes reliably send a body; accept the secret from body.webhook_secret
+  // (with or without a "Bearer " prefix) or ?key= as a fallback to the Authorization header.
+  const bodyToken = String((req.body && req.body.webhook_secret) || '').replace(/^Bearer\s+/i, '').trim();
+  const queryToken = String((req.query && req.query.key) || '').trim();
+  if ([headerToken, bodyToken, queryToken].includes(WEBHOOK_SECRET)) return next();
+  return res.status(401).json({ success: false, message: 'Unauthorized' });
 }
 
 function normalizeTime(value) {
