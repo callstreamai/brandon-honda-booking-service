@@ -851,6 +851,142 @@ export async function fetchTextViaSession(id, url, { grep, context = 300, maxSni
   }
 }
 
+// ---- Customer lookup (phone or email) --------------------------------------------
+// Drives the portal's own "Let's Get Started" screen (Email or Phone Number -> LET'S GO) in a
+// throwaway session so the caller's main session stays parked on the guest path. The result is
+// read from the portal's CustSearch reply as captured on the wire: retCode 1004 means no
+// account; anything else is mined for name / email / vehicles. The found-account UI branch is
+// not driven (the walker keeps using the mapped guest path); the record only personalizes the
+// call and pre-fills the vehicle.
+const PORTAL_MODELS = ['Accord Sedan', 'Accord Hybrid', 'Civic Sedan', 'Civic Hatchback', 'Civic Si', 'Civic Type R', 'Civic Sedan Hybrid', 'Civic Hatchback Hybrid', 'Civic Coupe', 'CR-V Hybrid', 'CR-V EFCEV', 'CR-V', 'Pilot', 'HR-V', 'Passport', 'Odyssey', 'Ridgeline', 'Prologue', 'Prelude', 'Fit', 'Insight', 'Clarity'];
+const AMBIGUOUS_MODELS = ['Accord', 'Civic', 'CR-V'];
+
+function normalizePortalModel(raw) {
+  const s = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!s) return { model: '', needs_variant: false };
+  const up = s.toUpperCase();
+  const hybrid = /HYBRID|HYB\b/.test(up);
+  if (/ACCORD/.test(up)) {
+    if (hybrid) return { model: 'Accord Hybrid', needs_variant: false };
+    if (/SDN|SEDAN/.test(up)) return { model: 'Accord Sedan', needs_variant: false };
+    return { model: 'Accord', needs_variant: true };
+  }
+  if (/CR-?V/.test(up)) return hybrid ? { model: 'CR-V Hybrid', needs_variant: false } : { model: 'CR-V', needs_variant: true };
+  if (/CIVIC/.test(up)) {
+    if (/TYPE\s*R/.test(up)) return { model: 'Civic Type R', needs_variant: false };
+    if (/\bSI\b/.test(up)) return { model: 'Civic Si', needs_variant: false };
+    if (/HATCH/.test(up)) return { model: hybrid ? 'Civic Hatchback Hybrid' : 'Civic Hatchback', needs_variant: false };
+    if (/SDN|SEDAN/.test(up)) return { model: hybrid ? 'Civic Sedan Hybrid' : 'Civic Sedan', needs_variant: false };
+    if (/COUPE|CPE/.test(up)) return { model: 'Civic Coupe', needs_variant: false };
+    return { model: 'Civic', needs_variant: true };
+  }
+  for (const m of PORTAL_MODELS) if (up.includes(m.toUpperCase())) return { model: m, needs_variant: false };
+  return { model: s, needs_variant: false, unmapped: true };
+}
+
+// Walk an arbitrary JSON payload and pull out the fields a DMS customer record tends to carry.
+function mineCustomerRecord(payload) {
+  const out = { first_name: '', last_name: '', email: '', phone: '', vehicles: [] };
+  const pick = (obj, res) => { for (const k of Object.keys(obj)) { if (res.some(r => r.test(k)) && typeof obj[k] === 'string' && obj[k].trim()) return obj[k].trim(); } return ''; };
+  const seenVeh = new Set();
+  const visit = (node, depth) => {
+    if (!node || depth > 12) return;
+    if (Array.isArray(node)) { node.forEach(n => visit(n, depth + 1)); return; }
+    if (typeof node !== 'object') return;
+    const keys = Object.keys(node);
+    const hasYear = keys.some(k => /^(model)?year$|^yr$|modelyear/i.test(k));
+    const hasModel = keys.some(k => /^model(name|desc|description)?$|^mdl/i.test(k));
+    if (hasYear && hasModel) {
+      const year = pick(node, [/^(model)?year$/i, /^yr$/i, /modelyear/i]) || String(node.year || node.modelYear || node.ModelYear || '');
+      const make = pick(node, [/^make(name|desc)?$/i, /^mk$/i]);
+      const model = pick(node, [/^model(name|desc|description)?$/i, /^mdl/i]);
+      const vin = pick(node, [/^vin$/i]);
+      const key = `${year}|${make}|${model}|${vin}`;
+      if (!seenVeh.has(key) && (year || model)) { seenVeh.add(key); out.vehicles.push({ year: String(year).slice(0, 4), make, model, vin: vin ? vin.slice(-6) : '' }); }
+    }
+    if (!out.first_name) out.first_name = pick(node, [/^first(_)?name$/i, /^fname$/i, /^firstnm$/i]);
+    if (!out.last_name) out.last_name = pick(node, [/^last(_)?name$/i, /^lname$/i, /^lastnm$/i, /^surname$/i]);
+    if (!out.email) out.email = pick(node, [/^e-?mail(address)?$/i]);
+    if (!out.phone) out.phone = pick(node, [/^(cell|mobile|home|primary)?phone(number|no)?$/i, /^phone1$/i]);
+    for (const k of keys) visit(node[k], depth + 1);
+  };
+  visit(payload, 0);
+  return out;
+}
+
+export async function lookupCustomer({ phone, email } = {}) {
+  const t0 = Date.now();
+  const digits = String(phone || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+  const query = digits.length === 10 ? digits : String(email || '').trim();
+  if (!query) return { ok: false, success: false, status: 'missing_phone_or_email', found: false };
+  const got = await acquireSession();
+  if (got.error) return { ok: false, success: false, status: 'session_start_failed', found: false, error: got.error.error };
+  const session = got.session;
+  const page = session.page;
+  const trace = [];
+  const note = (screen, extra) => trace.push({ t: Date.now() - t0, screen, ...(extra || {}) });
+  const frameText = async () => (await getReynoldsFrame(page)).evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+  const has = (t, needle) => t.toLowerCase().includes(String(needle).toLowerCase());
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  try {
+    let t = await frameText();
+    if (!has(t, 'Email or Phone Number')) {
+      if (has(t, 'Schedule your service appointment')) {
+        await applyStep(page, { type: 'clickText', pattern: 'Schedule Appointment', pick: 'shortest' });
+        for (let i = 0; i < 25 && !has(t, 'Email or Phone Number'); i++) { await sleep(200); t = await frameText(); }
+      }
+      if (!has(t, 'Email or Phone Number')) { note('entry', { failed: true, text: t.slice(0, 200) }); return { ok: false, success: false, status: 'lookup_screen_not_found', found: false, elapsed_ms: Date.now() - t0, trace }; }
+    }
+    note('lookup_screen');
+    const before = session.network.length;
+    let r = await applyStep(page, { type: 'fill', selector: '#phoneEmail_input', value: query });
+    if (r.ok === false) { note('fill', r); return { ok: false, success: false, status: 'phone_field_not_found', found: false, elapsed_ms: Date.now() - t0, trace }; }
+    r = await applyStep(page, { type: 'clickText', pattern: "^LET'S GO$" });
+    if (r.ok === false) { note('go', r); return { ok: false, success: false, status: 'lets_go_not_found', found: false, elapsed_ms: Date.now() - t0, trace }; }
+    let entry = null;
+    const deadline = Date.now() + 9000;
+    while (Date.now() < deadline) {
+      entry = session.network.slice(before).find(e => /"command"\s*:\s*"CustSearch"/.test(e.postData || '') && e.body);
+      if (entry) break;
+      await sleep(120);
+    }
+    if (!entry) { note('no_cust_search_reply', { text: (await frameText()).slice(0, 200) }); return { ok: false, success: false, status: 'lookup_timeout', found: false, elapsed_ms: Date.now() - t0, trace }; }
+    let payload = null;
+    try { payload = JSON.parse(entry.body); } catch (_e) { payload = null; }
+    const app = payload && payload.APP ? payload.APP : payload;
+    const retCode = String(app && app.retCode != null ? app.retCode : '');
+    const errMsg = String(app && app.errMsg ? app.errMsg : '');
+    note('cust_search', { retCode, errMsg: errMsg.slice(0, 80), bodyLen: String(entry.body || '').length });
+    if (retCode === '1004' || /not found/i.test(errMsg)) {
+      return { ok: true, success: true, found: false, status: 'not_found', query_type: digits.length === 10 ? 'phone' : 'email', elapsed_ms: Date.now() - t0, trace };
+    }
+    if (retCode && retCode !== '0' && retCode !== '200' && errMsg) {
+      return { ok: false, success: false, found: false, status: 'portal_error', ret_code: retCode, message: errMsg.slice(0, 200), elapsed_ms: Date.now() - t0, trace };
+    }
+    const rec = mineCustomerRecord(app);
+    const vehicles = rec.vehicles.map(v => { const n = normalizePortalModel(v.model); return { ...v, portal_model: n.model, needs_variant: n.needs_variant, unmapped: Boolean(n.unmapped) }; });
+    const vehicle_summary = vehicles.map(v => [v.year, v.make || 'Honda', v.portal_model].filter(Boolean).join(' ')).join(' and ');
+    const first = vehicles[0] || null;
+    console.log(JSON.stringify({ event: 'customer_lookup_found', keys: app && typeof app === 'object' ? Object.keys(app).slice(0, 40) : [], vehicles: vehicles.length, hasName: Boolean(rec.first_name), raw: JSON.stringify(app).slice(0, 4000) }));
+    return {
+      ok: true, success: true, found: true, status: 'found',
+      first_name: rec.first_name, last_name: rec.last_name, customer_name: [rec.first_name, rec.last_name].filter(Boolean).join(' '),
+      email: rec.email, phone: rec.phone || digits,
+      vehicle_count: vehicles.length, vehicles, vehicle_summary,
+      vehicle_year: vehicles.length === 1 && first ? first.year : '',
+      vehicle_model: vehicles.length === 1 && first && !first.needs_variant && !first.unmapped ? first.portal_model : '',
+      vehicle_needs_variant: vehicles.length === 1 && first ? Boolean(first.needs_variant || first.unmapped) : vehicles.length > 1,
+      elapsed_ms: Date.now() - t0, trace
+    };
+  } catch (err) {
+    return { ok: false, success: false, found: false, status: 'lookup_exception', error: serializeError(err), elapsed_ms: Date.now() - t0, trace };
+  } finally {
+    sessions.delete(session.id);
+    session.browser?.close().catch(() => {});
+    poolTopUp();
+  }
+}
+
 export async function getSessionNetwork(id, since = 0) {
   const session = sessions.get(id);
   if (!session) return { ok: false, status: 'session_not_found' };
