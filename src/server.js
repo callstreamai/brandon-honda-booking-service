@@ -75,7 +75,9 @@ function soonestCandidates(max = 5) {
   const t = easternToday();
   let start = addDays(t, t.hour < 12 ? 0 : 1);
   const out = [];
-  for (let i = 0; out.length < max && i < 10; i++) { const c = addDays(start, i); if (c.dow !== 0) out.push(c); }
+  // The portal shows Sunday openings for this store, so every day is a candidate; a closed day comes
+  // back from the walker as date_not_available and the search simply moves on.
+  for (let i = 0; out.length < max && i < 10; i++) out.push(addDays(start, i));
   return out;
 }
 const isSoonest = v => /^(soonest|asap|earliest|next|first available|any)$/i.test(String(v || '').trim());
