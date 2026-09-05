@@ -398,38 +398,61 @@ function parseUsDate(value) {
 }
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
-// Walks a warm session from wherever it is to the time grid for the requested date and
-// transport row, and returns the open times. Read-only: it never reaches the review screen
-// and never touches ADD APPOINTMENT. Leaves the session on the time screen so a later
-// /book-service call can continue from there.
-export async function collectAvailability(sessionId, input = {}) {
-  const trace = [];
-  const t0 = Date.now();
-  let session = sessions.get(sessionId);
-  let startedHere = false;
-  if (!session) {
-    const started = await startSession({});
-    if (!started.ok) return { ok: false, status: 'session_start_failed', error: started.error, trace };
-    session = sessions.get(started.id);
-    startedHere = true;
-  }
-  session.lastUsedAt = Date.now();
-  const page = session.page;
-  const date = parseUsDate(input.preferred_date);
-  if (!date) return { ok: false, status: 'bad_date', message: 'preferred_date must be MM/DD/YYYY', session_id: session.id, trace };
-  const transport = String(input.transport_option || input.transportation_plan || 'I am dropping off my vehicle.');
-  const isAfterHours = transport.toLowerCase().includes(AFTER_HOURS_LABEL);
-  const modelLabel = String(input.vehicle_model || '').trim();
-  const year = String(input.vehicle_year || '').trim();
-  const mileage = String(input.vehicle_mileage || '').replace(/[^\d]/g, '');
+const STAGES = ['start', 'entry', 'vehicle', 'mileage', 'service', 'date', 'grid'];
+const stageIndex = st => STAGES.indexOf(st);
+const sessionsByCall = new Map(); // call_id -> session id
+
+export function resolveSessionId({ session_id, call_id } = {}) {
+  if (session_id && sessions.has(session_id)) return session_id;
+  if (call_id && sessionsByCall.has(call_id) && sessions.has(sessionsByCall.get(call_id))) return sessionsByCall.get(call_id);
+  return null;
+}
+
+export function bindSessionToCall(id, callId) {
+  if (id && callId) sessionsByCall.set(String(callId), id);
+}
+
+function normalizeInput(input = {}) {
+  const transport = String(input.transport_option || input.transportation_plan || '').trim();
   const serviceLabel = String(input.service_label || '').trim();
   const freeText = String(input.service_free_text || input.service_concern || '').trim();
+  return {
+    year: String(input.vehicle_year || '').trim(),
+    model: String(input.vehicle_model || '').trim(),
+    mileage: String(input.vehicle_mileage || '').replace(/[^\d]/g, ''),
+    serviceLabel,
+    freeText,
+    serviceKey: serviceLabel && serviceLabel.toUpperCase() !== 'TELL US' ? 'label:' + serviceLabel : (serviceLabel || freeText ? 'tellus:' + freeText : ''),
+    transport,
+    date: parseUsDate(input.preferred_date),
+    dateKey: String(input.preferred_date || '').trim()
+  };
+}
+
+// Serializes work per session: a background advance and a later /availability call never
+// drive the same browser at the same time; the later call simply waits its turn.
+function withSessionLock(session, fn) {
+  const run = (session.pending || Promise.resolve()).catch(() => {}).then(fn);
+  session.pending = run;
+  return run;
+}
+
+// Idempotent walker. Looks at the current screen and applies only the steps whose data is
+// present, up to `until` (a STAGES entry). Safe to call repeatedly with growing input: every
+// step is gated on the screen it expects, so re-running is a no-op for stages already done.
+// If the vehicle or service differs from what was already applied, the session restarts,
+// since the portal offers no way back that we trust.
+async function walk(session, input, until = 'grid') {
+  const t0 = Date.now();
+  const trace = session.trace = session.trace || [];
+  const note = (screen, detail) => trace.push({ t: Date.now() - t0, screen, ...detail });
+  const inp = normalizeInput(input);
+  const page = session.page;
+  session.applied = session.applied || {};
+  const ap = session.applied;
 
   const text = async () => (await getReynoldsFrame(page)).evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
   const has = (t, needle) => t.toLowerCase().includes(String(needle).toLowerCase());
-  const note = (screen, detail) => trace.push({ t: Date.now() - t0, screen, ...detail });
-
-  // click, then insist the screen actually changed (both first clicks are known to swallow a click)
   async function clickUntil(step, expectText, { absent = false, attempts = 6, waitMs = 1500 } = {}) {
     for (let i = 0; i < attempts; i++) {
       const r = await applyStep(page, step);
@@ -446,120 +469,131 @@ export async function collectAvailability(sessionId, input = {}) {
     note(step.pattern || step.selector || step.type, { failed: true, lastText: (await text()).slice(0, 400), controls: (snap.controls || []).filter(c => c.visible).map(c => (c.disabled ? '(dis)' : '') + c.text.slice(0, 40)).slice(0, 40) });
     return false;
   }
+  const fail = async (status, extra = {}) => {
+    let lastText = ''; try { lastText = (await text()).slice(0, 800); } catch (_e) {}
+    session.stage = session.stage || 'start';
+    return { ok: false, status, ...extra, stage: session.stage, last_screen_text: lastText, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
+  };
+  const reached = st => { session.stage = st; return stageIndex(st) >= stageIndex(until); };
+  const done = extra => ({ ok: true, stage: session.stage, session_id: session.id, elapsed_ms: Date.now() - t0, trace, ...extra });
 
   try {
     let t = await text();
-    // 1. entry
+    // ---- entry (always)
     if (has(t, 'Schedule your service appointment') && !has(t, "I'M NEW") && !has(t, 'Select Your Make')) {
       if (!await clickUntil({ type: 'clickText', pattern: 'Schedule Appointment', pick: 'shortest', firstClick: true }, "I'M NEW")) return fail('entry_failed');
     }
     t = await text();
-    if (has(t, "I'M NEW") && !has(t, 'Select Your Make')) {
+    if (has(t, "I'M NEW") && !has(t, 'Select Your Make') && !ap.vehicle) {
       if (!await clickUntil({ type: 'clickText', pattern: "^I'M NEW$", pick: 'shortest', firstClick: true }, 'Select Your Make')) return fail('guest_entry_failed');
     }
-    // 2. vehicle
+    if (reached('entry')) return done();
+
+    // ---- vehicle
+    if (!inp.year || !inp.model) return done({ waiting_for: 'vehicle' });
+    const vehicleKey = `${inp.year}|${inp.model}`;
+    if (ap.vehicle && ap.vehicle !== vehicleKey) return { restart: true, reason: 'vehicle_changed' };
     t = await text();
-    if (has(t, 'Select Your Make')) {
-      if (!await clickUntil({ type: 'clickText', pattern: '^Honda$' }, 'Select Your Make', { absent: true, waitMs: 1200 }) && !has(await text(), year)) return fail('make_failed');
-      // make -> year list -> model list -> mileage; assert each screen by its heading
+    if (!ap.vehicle && has(t, 'Select Your Make')) {
+      if (!await clickUntil({ type: 'clickText', pattern: '^Honda$' }, 'Select Your Make', { absent: true, waitMs: 1200 }) && !has(await text(), inp.year)) return fail('make_failed');
       if (!has(await text(), 'Select Model')) {
-        if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(year) + '$' }, 'Select Model', { attempts: 3, waitMs: 1200 })) return fail('year_not_available', { year });
+        if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(inp.year) + '$' }, 'Select Model', { attempts: 3, waitMs: 1200 })) return fail('year_not_available', { year: inp.year });
       }
       await page.waitForLoadState('networkidle', { timeout: 1500 }).catch(() => {});
-      if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(modelLabel) + '$', timeoutMs: 5000 }, 'Estimated Mileage', { attempts: 3 })) return fail('model_not_available_for_year', { year, model: modelLabel });
+      if (!await clickUntil({ type: 'clickText', pattern: '^' + escapeRegex(inp.model) + '$', timeoutMs: 5000 }, 'Estimated Mileage', { attempts: 3 })) return fail('model_not_available_for_year', { year: inp.year, model: inp.model });
+      ap.vehicle = vehicleKey;
     }
-    // 3. mileage + PROCEED (second known click race)
+    if (reached('vehicle')) return done();
+
+    // ---- mileage (accepts unknown)
     t = await text();
-    if (has(t, 'Estimated Mileage')) {
-      if (mileage) await applyStep(page, { type: 'fill', selector: '#estMileageText_input', value: mileage });
+    if (has(t, 'Estimated Mileage') && !ap.mileage) {
+      if (inp.mileage) await applyStep(page, { type: 'fill', selector: '#estMileageText_input', value: inp.mileage });
       else await applyStep(page, { type: 'clickSelector', selector: '#estMilCheckbox' });
       if (!await clickUntil({ type: 'clickText', pattern: '^PROCEED$', pick: 'last' }, 'Estimated Mileage', { absent: true })) return fail('mileage_proceed_failed');
+      ap.mileage = inp.mileage || 'unknown';
     }
-    // 4. service: exact label checkbox, or TELL US free text
+    if (reached('mileage')) return done();
+
+    // ---- service
+    if (!inp.serviceKey) return done({ waiting_for: 'service' });
+    if (ap.service && ap.service !== inp.serviceKey) return { restart: true, reason: 'service_changed' };
     t = await text();
-    const onService = has(t, 'TELL US') || has(t, 'OIL CHANGE') || has(t, 'RECALL');
-    if (onService) {
-      if (serviceLabel && serviceLabel.toUpperCase() !== 'TELL US') {
-        // service tiles carry the label plus "Call Dealer for Pricing"; prefer a checkbox if one exists, else click the tile by text
-        const r = await applyStep(page, { type: 'clickCheckboxNearText', pattern: '^' + escapeRegex(serviceLabel) + '$' });
-        note('service_label', { label: serviceLabel, ok: r.ok, reason: r.reason, checked: r.checked, viaTile: r.viaTile });
-        if (r.ok === false) return fail('service_label_not_found', { label: serviceLabel, detail: r });
+    if (!ap.service && (has(t, 'INDIVIDUAL SERVICES') || has(t, 'TELL US'))) {
+      if (inp.serviceKey.startsWith('label:')) {
+        const r = await applyStep(page, { type: 'clickCheckboxNearText', pattern: '^' + escapeRegex(inp.serviceLabel) + '$' });
+        note('service_label', { label: inp.serviceLabel, ok: r.ok, reason: r.reason, checked: r.checked, viaTile: r.viaTile });
+        if (r.ok === false) return fail('service_label_not_found', { label: inp.serviceLabel, detail: r });
       } else {
         const r1 = await applyStep(page, { type: 'clickText', pattern: 'TELL US', pick: 'shortest' });
-        const r2 = await applyStep(page, { type: 'fill', selector: 'textarea', value: freeText || 'Customer request, see notes' });
+        const r2 = await applyStep(page, { type: 'fill', selector: 'textarea', value: inp.freeText || 'Customer request, see notes' });
         note('service_tell_us', { tab: r1.ok, filled: r2.ok, reason: r2.reason });
         if (r2.ok === false) return fail('tell_us_textarea_not_found');
       }
-      // the footer reads SKIP until a service is selected; never click SKIP. The mileage screen's
-      // own Proceed is still mounted underneath, so take the LAST matching footer button.
       // the mileage screen's mixed-case 'Proceed' stays mounted; the service footer is uppercase 'PROCEED'
       await page.waitForFunction(() => Array.from(document.querySelectorAll('button, [role="button"]')).some(b => (b.innerText || '').trim() === 'PROCEED' && !b.disabled && b.getBoundingClientRect().height > 0), null, { timeout: 8000 }).catch(() => {});
       if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true, force: true, timeoutMs: 4000 }, 'ANY ADVISOR', { waitMs: 6000, attempts: 3 })) return fail('service_proceed_failed');
+      ap.service = inp.serviceKey;
     }
-    // 5. adaptive walk: advisor -> date -> time grid (screen order confirmed at runtime; see trace)
+    if (reached('service')) return done();
+
+    // ---- date (+ advisor, same screen) and grid
+    if (!inp.date) return done({ waiting_for: 'date' });
     let advisorDone = false;
     for (let hop = 0; hop < 8; hop++) {
       const frame = await getReynoldsFrame(page);
       const st = await snapshot(page);
       const body = st.text || '';
       const ctl = (st.controls || []).filter(c => c.visible && !c.disabled);
-      // time grid reached?
       const timesVisible = ctl.filter(c => TIME_RE.test(c.text) || /^before 0?6:00\s?am$/i.test(c.text));
-      if (timesVisible.length) {
-        if (isAfterHours) {
-          const row = await listTimesInTransportRow(frame, transport);
-          note('time_grid', { afterHours: true, row: row.ok, rowsOnScreen: row.rowsOnScreen });
-          return done(row.ok ? [AFTER_HOURS_SLOT] : [], row);
-        }
+      const gridReady = timesVisible.length > 0 || /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(body);
+      const headerHasDate = new RegExp(`\\b${MONTHS[inp.date.month - 1]}\\s+${inp.date.day}\\b`, 'i').test(body);
+      if (gridReady && (ap.date === inp.dateKey || headerHasDate)) {
+        ap.date = inp.dateKey;
+        session.stage = 'grid';
+        if (stageIndex(until) < stageIndex('grid')) return done();
+        const transport = inp.transport || 'I am dropping off my vehicle.';
+        const isAfterHours = transport.toLowerCase().includes(AFTER_HOURS_LABEL);
         const row = await listTimesInTransportRow(frame, transport);
         note('time_grid', { rowOk: row.ok, reason: row.reason, count: row.times ? row.times.length : 0, counts: row.counts, clusterSizes: row.clusterSizes, allTimeCount: row.allTimeCount });
         if (!row.ok) return fail('transport_row_not_found', { detail: row });
-        return done(row.times, row);
+        return done({ slots: isAfterHours ? row.times.filter(x => /^before/i.test(x)) : row.times.filter(x => !/^before/i.test(x)), transport_matched: row.transportMatched, rows_on_screen: row.rowsOnScreen });
       }
-      // advisor screen
-      if (/would you like to see a certain advisor/i.test(body) && !advisorDone) {
+      if (/would you like to see a certain advisor/i.test(body) && !advisorDone && !gridReady) {
         advisorDone = true;
-        // the advisor list is a tile grid like the service menu; ANY ADVISOR is one of the tiles
         let r = await applyStep(page, { type: 'clickCheckboxNearText', pattern: '^ANY ADVISOR$' });
         if (r.ok === false) r = await applyStep(page, { type: 'clickAnyText', pattern: '^ANY ADVISOR$' });
-        note('advisor', { selected: r.ok, checked: r.checked, reason: r.reason, header: body.slice(0, 120) });
+        note('advisor', { selected: r.ok, checked: r.checked, reason: r.reason });
         if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true, force: true, timeoutMs: 4000 }, 'would you like to see a certain advisor', { absent: true, waitMs: 2500 })) return fail('advisor_proceed_failed');
         continue;
       }
-      // date screen: a month header plus day-number buttons, or a date input
       const dateInput = (st.fields || []).find(f => f.visible && (f.type === 'date' || /date/i.test(f.id + f.name + f.placeholder)));
       const dayButtons = ctl.filter(c => /^\d{1,2}$/.test(c.text));
       const monthShown = MONTHS.findIndex(m => body.toLowerCase().includes(m));
       if (dateInput || dayButtons.length >= 20) {
-        note('date_screen', { dateInput: dateInput ? dateInput.id : null, dayButtons: dayButtons.length, monthShown: monthShown >= 0 ? MONTHS[monthShown] : null });
+        note('date_screen', { dateInput: dateInput ? dateInput.id : null, dayButtons: dayButtons.length, monthShown: monthShown >= 0 ? MONTHS[monthShown] : null, gridReady, headerHasDate });
         if (dateInput) {
-          const iso = `${date.year}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+          const iso = `${inp.date.year}-${String(inp.date.month).padStart(2, '0')}-${String(inp.date.day).padStart(2, '0')}`;
           await applyStep(page, { type: 'fill', selector: dateInput.id ? '#' + dateInput.id : 'input[type="date"]', value: iso });
         } else {
-          // advance months until the header matches
           for (let m = 0; m < 6 && monthShown >= 0; m++) {
             const nowText = (await text()).toLowerCase();
             const cur = MONTHS.findIndex(mm => nowText.includes(mm));
-            if (cur === date.month - 1) break;
+            if (cur === inp.date.month - 1) break;
             const r = await applyStep(page, { type: 'clickText', pattern: '(next|›|>|chevron_right|arrow_forward)', pick: 'shortest' });
             note('calendar_next', { ok: r.ok, reason: r.reason });
             if (r.ok === false) break;
             await page.waitForTimeout(500);
           }
-          const r = await applyStep(page, { type: 'clickText', pattern: '^' + date.day + '$', pick: 'first' });
-          note('day_click', { day: date.day, ok: r.ok, reason: r.reason });
+          const r = await applyStep(page, { type: 'clickText', pattern: '^' + inp.date.day + '$', pick: 'first' });
+          note('day_click', { day: inp.date.day, ok: r.ok, reason: r.reason });
+          if (r.ok === false) return fail('date_not_selectable', { date: inp.dateKey });
           // the grid takes up to ~10 s to render after the day is chosen
           await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 15000 }).catch(() => {});
-          if (r.ok === false) return fail('date_not_selectable', { date: input.preferred_date });
         }
-        await page.waitForTimeout(800);
-        const after = await snapshot(page);
-        const proceed = (after.controls || []).find(c => c.visible && !c.disabled && /^PROCEED$/i.test(c.text));
-        if (proceed) await applyStep(page, { type: 'clickText', pattern: '^PROCEED$', pick: 'last' });
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(500);
         continue;
       }
-      // unknown intermediate screen: try PROCEED once, otherwise stop and report
       const proceed = ctl.find(c => /^PROCEED$/i.test(c.text));
       note('unknown_screen', { proceed: Boolean(proceed), text: body.slice(0, 500), controls: ctl.map(c => c.text).slice(0, 25) });
       if (!proceed) return fail('unrecognized_screen');
@@ -568,17 +602,71 @@ export async function collectAvailability(sessionId, input = {}) {
     }
     return fail('too_many_screens');
   } catch (err) {
-    return { ok: false, status: 'availability_exception', error: serializeError(err), session_id: session.id, session_started_here: startedHere, trace };
+    return { ok: false, status: 'walk_exception', error: serializeError(err), stage: session.stage, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
   }
+}
 
-  function done(times, row) {
-    return { ok: true, status: 'availability_live', slots: times, transport_matched: row.transportMatched || null, rows_on_screen: row.rowsOnScreen || [], session_id: session.id, session_started_here: startedHere, elapsed_ms: Date.now() - t0, trace };
-  }
-  async function fail(status, extra = {}) {
-    let lastText = '';
-    try { lastText = (await text()).slice(0, 800); } catch (_e) {}
-    return { ok: false, status, ...extra, last_screen_text: lastText, session_id: session.id, session_started_here: startedHere, elapsed_ms: Date.now() - t0, trace };
-  }
+async function getOrStartSession(ref = {}) {
+  const id = resolveSessionId(ref);
+  if (id) return { session: sessions.get(id), startedHere: false };
+  const started = await startSession({});
+  if (!started.ok) return { error: started };
+  if (ref.call_id) bindSessionToCall(started.id, ref.call_id);
+  return { session: sessions.get(started.id), startedHere: true };
+}
+
+async function restartSession(session, callId) {
+  sessions.delete(session.id);
+  for (const [c, id] of sessionsByCall.entries()) if (id === session.id) sessionsByCall.delete(c);
+  await session.browser.close().catch(() => {});
+  const started = await startSession({});
+  if (!started.ok) return null;
+  if (callId) bindSessionToCall(started.id, callId);
+  return sessions.get(started.id);
+}
+
+// Advance as far as the known fields allow (default: through the service menu, or the date
+// screen when a date is known). Returns the promise of the walk; callers may respond without
+// awaiting it, since /availability will wait on the session lock anyway.
+export async function advanceSession(ref, input = {}, { until, wait = false } = {}) {
+  const got = await getOrStartSession(ref);
+  if (got.error) return { ok: false, status: 'session_start_failed', error: got.error.error };
+  let session = got.session;
+  const target = until || (input.preferred_date ? 'date' : 'service');
+  const job = withSessionLock(session, async () => {
+    let r = await walk(session, input, target);
+    if (r.restart) {
+      const fresh = await restartSession(session, ref.call_id);
+      if (!fresh) return { ok: false, status: 'restart_failed' };
+      fresh.trace = [{ t: 0, screen: 'restart', reason: r.reason }];
+      session = fresh;
+      r = await walk(fresh, input, target);
+    }
+    return r;
+  });
+  if (!wait) return { ok: true, accepted: true, session_id: session.id, target, started_here: got.startedHere };
+  return { ...(await job), started_here: got.startedHere };
+}
+
+// Full availability read: waits for any in-flight advance, walks the rest, returns the row's slots.
+export async function collectAvailability(sessionId, input = {}) {
+  const ref = { session_id: sessionId, call_id: input.call_id };
+  const got = await getOrStartSession(ref);
+  if (got.error) return { ok: false, status: 'session_start_failed', error: got.error.error, trace: [] };
+  let session = got.session;
+  const result = await withSessionLock(session, async () => {
+    let r = await walk(session, input, 'grid');
+    if (r.restart) {
+      const fresh = await restartSession(session, ref.call_id);
+      if (!fresh) return { ok: false, status: 'restart_failed', trace: [] };
+      fresh.trace = [{ t: 0, screen: 'restart', reason: r.reason }];
+      session = fresh;
+      r = await walk(fresh, input, 'grid');
+    }
+    return r;
+  });
+  if (result.ok && result.waiting_for) return { ...result, ok: false, status: 'missing_' + result.waiting_for };
+  return { ...result, session_started_here: got.startedHere };
 }
 
 async function applyStep(page, step) {
