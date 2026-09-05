@@ -402,13 +402,18 @@ app.post('/availability', requireAuth, async (req, res) => {
     // "soonest": walk the next service days in order on the same session until one has open times.
     const candidates = isSoonest(input.preferred_date)
       ? soonestCandidates(5)
-      : [(() => { const m = String(input.preferred_date).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? addDays({ y: Number(m[3]), m: Number(m[2]), d: Number(m[1]) }, 0) : null; })()].filter(Boolean);
+      : [(() => { const m = String(input.preferred_date).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? addDays({ y: Number(m[3]), m: Number(m[1]), d: Number(m[2]) }, 0) : null; })()].filter(Boolean);
     if (!candidates.length) return res.status(200).json({ ...base, success: false, status: 'bad_date', slots: [], available_slots: [], message: 'preferred_date must be MM/DD/YYYY or "soonest".' });
     let result = null, used = null; const tried = [];
     let sessionId = input.session_id || undefined;
     for (const c of candidates) {
       const dateStr = fmtUs(c);
-      result = await collectAvailability(sessionId, { ...input, preferred_date: dateStr });
+      // never let one walk run past Bland's 45 s webhook timeout; fail closed with a clean status instead
+      const remaining = Math.max(3000, 40000 - (Date.now() - t0));
+      result = await Promise.race([
+        collectAvailability(sessionId, { ...input, preferred_date: dateStr }),
+        new Promise(r => setTimeout(() => r({ ok: false, status: 'availability_timeout', session_id: sessionId, trace: [] }), remaining))
+      ]);
       sessionId = result.session_id || sessionId;
       const n = Array.isArray(result.slots) ? result.slots.length : 0;
       tried.push({ date: dateStr, status: result.ok ? (n ? 'open' : 'none') : result.status, count: n });
