@@ -492,7 +492,8 @@ export async function collectAvailability(sessionId, input = {}) {
       }
       // the footer reads SKIP until a service is selected; never click SKIP. The mileage screen's
       // own Proceed is still mounted underneath, so take the LAST matching footer button.
-      await page.waitForFunction(() => Array.from(document.querySelectorAll('button, [role="button"]')).some(b => /^PROCEED$/i.test((b.innerText || '').trim()) && !b.disabled && b.getBoundingClientRect().height > 0), null, { timeout: 5000 }).catch(() => {});
+      // the mileage screen's mixed-case 'Proceed' stays mounted; the service footer is uppercase 'PROCEED'
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('button, [role="button"]')).some(b => (b.innerText || '').trim() === 'PROCEED' && !b.disabled && b.getBoundingClientRect().height > 0), null, { timeout: 8000 }).catch(() => {});
       if (!await clickUntil({ type: 'clickText', pattern: '^(PROCEED|NEXT|CONTINUE|DONE)$', pick: 'last', noFallback: true, force: true, timeoutMs: 4000 }, 'ANY ADVISOR', { waitMs: 6000, attempts: 3 })) return fail('service_proceed_failed');
     }
     // 5. adaptive walk: advisor -> date -> time grid (screen order confirmed at runtime; see trace)
@@ -547,7 +548,8 @@ export async function collectAvailability(sessionId, input = {}) {
           }
           const r = await applyStep(page, { type: 'clickText', pattern: '^' + date.day + '$', pick: 'first' });
           note('day_click', { day: date.day, ok: r.ok, reason: r.reason });
-          await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 8000 }).catch(() => {});
+          // the grid takes up to ~10 s to render after the day is chosen
+          await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 15000 }).catch(() => {});
           if (r.ok === false) return fail('date_not_selectable', { date: input.preferred_date });
         }
         await page.waitForTimeout(800);
