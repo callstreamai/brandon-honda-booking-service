@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
-import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability } from './sessionDriver.js';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -370,6 +370,7 @@ app.post('/availability', requireAuth, async (req, res) => {
       available_slots: slots,
       session_id: result.session_id || input.session_id || null,
       transport_matched: result.transport_matched || null,
+      stage: result.stage || null,
       message: success
         ? `${slots.length} open time${slots.length === 1 ? '' : 's'} on ${input.preferred_date} for ${base.transport_option}.`
         : (result.ok ? `No open times on ${input.preferred_date} for ${base.transport_option}.` : `Could not read availability from the scheduler (${result.status}). Transfer caller to the service team.`),
@@ -422,13 +423,34 @@ app.post('/next-state', requireAuth, async (req, res) => {
 
 app.post('/sessions/start', requireAuth, async (req, res) => {
   try {
+    const existing = resolveSessionId({ call_id: req.body?.call_id });
+    if (existing) return res.status(200).json({ ok: true, success: true, id: existing, session_id: existing, reused: true });
     const result = await startSession({ url: req.body?.url || SCHEDULER_URL });
     if (result.ok) result.success = true;
     if (result.id && !result.session_id) result.session_id = result.id;
+    if (result.ok && req.body?.call_id) bindSessionToCall(result.id, String(req.body.call_id));
     res.status(result.ok === false ? 502 : 200).json(result);
   } catch (err) {
     console.error('session_start_unhandled', err);
     res.status(500).json({ ok: false, status: 'session_start_unhandled', error: err?.message || String(err) });
+  }
+});
+
+// Background pre-advance. The pathway calls this as soon as it knows the vehicle, then again
+// with the service, then with transport/date. Returns immediately; the walk continues under the
+// session lock so a later /availability call waits for it instead of racing it. Pass ?wait=1
+// to block for the result (testing). Sessions are found by session_id or, failing that, call_id.
+app.post(['/sessions/advance', '/sessions/:id/advance'], requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const ref = { session_id: req.params.id || body.session_id, call_id: body.call_id ? String(body.call_id) : undefined };
+  const wait = String(req.query?.wait || body.wait || '') === '1';
+  try {
+    const result = await advanceSession(ref, body, { until: body.until, wait });
+    console.log(JSON.stringify({ event: 'advance', call_id: ref.call_id || null, wait, ok: result.ok, status: result.status, stage: result.stage, target: result.target, elapsed_ms: result.elapsed_ms }));
+    res.status(200).json(result);
+  } catch (err) {
+    console.error('advance_unhandled', err);
+    res.status(500).json({ ok: false, status: 'advance_unhandled', error: err?.message || String(err) });
   }
 });
 
