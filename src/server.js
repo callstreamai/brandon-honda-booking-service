@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
-import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession } from './sessionDriver.js';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession, acquireBoundSession } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -423,12 +423,9 @@ app.post('/next-state', requireAuth, async (req, res) => {
 
 app.post('/sessions/start', requireAuth, async (req, res) => {
   try {
-    const existing = resolveSessionId({ call_id: req.body?.call_id });
-    if (existing) return res.status(200).json({ ok: true, success: true, id: existing, session_id: existing, reused: true });
-    const result = await startSession({ url: req.body?.url || SCHEDULER_URL });
-    if (result.ok) result.success = true;
-    if (result.id && !result.session_id) result.session_id = result.id;
-    if (result.ok && req.body?.call_id) bindSessionToCall(result.id, String(req.body.call_id));
+    const acq = await acquireBoundSession(req.body?.call_id ? String(req.body.call_id) : undefined, req.body?.url || SCHEDULER_URL);
+    if (acq.error) return res.status(502).json({ ok: false, success: false, status: 'session_start_failed', error: acq.error.error });
+    const result = { ok: true, success: true, id: acq.id, session_id: acq.id, reused: Boolean(acq.reused), from_pool: Boolean(acq.fromPool) };
     res.status(result.ok === false ? 502 : 200).json(result);
   } catch (err) {
     console.error('session_start_unhandled', err);
