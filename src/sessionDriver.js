@@ -696,11 +696,30 @@ export async function startSession({ url = DEFAULT_URL } = {}) {
     browser = await chromium.connectOverCDP(wsEndpoint());
     const context = browser.contexts()[0] || await browser.newContext();
     const page = context.pages()[0] || await context.newPage();
+    const network = [];
+    const t0 = Date.now();
+    // Record the portal's own API traffic (XHR/fetch to reyrey.net) so the flow can be mapped
+    // to direct calls. Bodies are truncated; the log is capped at 300 entries per session.
+    page.on('response', async res => {
+      try {
+        const req = res.request();
+        const rt = req.resourceType();
+        if (!/reyrey\.net/i.test(req.url()) || !['xhr', 'fetch', 'document'].includes(rt)) return;
+        const ct = (res.headers()['content-type'] || '').toLowerCase();
+        let body = null;
+        if (/json|text|javascript/.test(ct) && rt !== 'document') { body = (await res.text().catch(() => '')).slice(0, 30000); }
+        const rh = req.headers();
+        const keep = {};
+        for (const k of Object.keys(rh)) if (!/^(cookie|user-agent|accept-language|sec-|referer|origin)$/i.test(k) && !k.startsWith(':')) keep[k] = String(rh[k]).slice(0, 400);
+        network.push({ t: Date.now() - t0, type: rt, method: req.method(), url: req.url(), reqHeaders: keep, postData: (req.postData() || '').slice(0, 8000), status: res.status(), respContentType: ct, body });
+        if (network.length > 300) network.shift();
+      } catch (_e) {}
+    });
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await page.waitForLoadState('networkidle', { timeout: 2500 }).catch(() => {});
     await getReynoldsFrame(page);
     const id = crypto.randomUUID();
-    sessions.set(id, { id, browser, context, page, createdAt: Date.now(), lastUsedAt: Date.now() });
+    sessions.set(id, { id, browser, context, page, network, createdAt: Date.now(), lastUsedAt: Date.now() });
     return { ok: true, id, state: await snapshot(page) };
   } catch (err) {
     await browser?.close().catch(() => {});
@@ -737,6 +756,15 @@ export async function stepSession(id, steps = []) {
   } catch (err) {
     return { ok: false, status: 'step_failed', id, results, error: serializeError(err) };
   }
+}
+
+export async function getSessionNetwork(id, since = 0) {
+  const session = sessions.get(id);
+  if (!session) return { ok: false, status: 'session_not_found' };
+  const entries = (session.network || []).slice(Number(since) || 0);
+  let cookies = [];
+  try { cookies = (await session.context.cookies()).map(c => ({ name: c.name, domain: c.domain, path: c.path, httpOnly: c.httpOnly, secure: c.secure, valueLen: String(c.value || '').length, valuePrefix: String(c.value || '').slice(0, 12) })); } catch (_e) {}
+  return { ok: true, id, count: entries.length, total: (session.network || []).length, cookies, entries };
 }
 
 export async function getSessionState(id) {
