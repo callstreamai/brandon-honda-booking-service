@@ -606,23 +606,84 @@ async function walk(session, input, until = 'grid') {
   }
 }
 
+// ---- Warm session pool ------------------------------------------------------
+// Keeps a few portal sessions pre-connected and parked at the entry screen so a call
+// claims one instantly instead of paying the ~5-6s Browserless connect + portal load at
+// answer time. Pre-warm during the disclosure still runs; the pool makes it instant and
+// covers the case where the pre-warm webhook is skipped or slow.
+const POOL = []; // ids of ready, unbound sessions
+let warming = 0;
+const POOL_SIZE = Math.max(0, Number(process.env.SESSION_POOL_SIZE || '1'));
+const POOL_MAX_AGE_MS = Number(process.env.SESSION_POOL_MAX_AGE_MS || String(8 * 60 * 1000));
+
+function poolFresh(session) {
+  if (!session) return false;
+  if (Date.now() - session.createdAt > POOL_MAX_AGE_MS) return false;
+  try { if (session.browser && session.browser.isConnected && !session.browser.isConnected()) return false; } catch (_e) {}
+  return true;
+}
+
+async function warmOne() {
+  if (POOL.length + warming >= POOL_SIZE) return;
+  warming++;
+  try {
+    const started = await startSession({ pooled: true });
+    if (started.ok) POOL.push(started.id);
+  } catch (_e) {} finally { warming--; }
+}
+
+function poolTopUp() {
+  const need = POOL_SIZE - POOL.length - warming;
+  for (let i = 0; i < need; i++) warmOne();
+}
+
+// Return a ready pooled session (dropping any that went stale), or null. Backfills after.
+function acquireFromPool() {
+  while (POOL.length) {
+    const id = POOL.shift();
+    const session = sessions.get(id);
+    if (poolFresh(session)) { poolTopUp(); return session; }
+    if (session) { sessions.delete(id); session.browser?.close().catch(() => {}); }
+  }
+  poolTopUp();
+  return null;
+}
+
+async function acquireSession() {
+  const pooled = acquireFromPool();
+  if (pooled) { pooled.pooled = false; pooled.lastUsedAt = Date.now(); return { session: pooled, fromPool: true }; }
+  const started = await startSession({});
+  if (!started.ok) return { error: started };
+  return { session: sessions.get(started.id), fromPool: false };
+}
+
+// Keep the pool topped up and prune stale members.
+setInterval(() => {
+  for (let i = POOL.length - 1; i >= 0; i--) {
+    const session = sessions.get(POOL[i]);
+    if (!poolFresh(session)) { POOL.splice(i, 1); if (session) { sessions.delete(session.id); session.browser?.close().catch(() => {}); } }
+  }
+  poolTopUp();
+}, 30 * 1000).unref();
+poolTopUp();
+
 async function getOrStartSession(ref = {}) {
   const id = resolveSessionId(ref);
   if (id) return { session: sessions.get(id), startedHere: false };
-  const started = await startSession({});
-  if (!started.ok) return { error: started };
-  if (ref.call_id) bindSessionToCall(started.id, ref.call_id);
-  return { session: sessions.get(started.id), startedHere: true };
+  const got = await acquireSession();
+  if (got.error) return { error: got.error };
+  if (ref.call_id) bindSessionToCall(got.session.id, ref.call_id);
+  return { session: got.session, startedHere: true, fromPool: got.fromPool };
 }
 
 async function restartSession(session, callId) {
   sessions.delete(session.id);
   for (const [c, id] of sessionsByCall.entries()) if (id === session.id) sessionsByCall.delete(c);
   await session.browser.close().catch(() => {});
-  const started = await startSession({});
-  if (!started.ok) return null;
-  if (callId) bindSessionToCall(started.id, callId);
-  return sessions.get(started.id);
+  const got = await acquireSession();
+  if (got.error) return null;
+  if (callId) bindSessionToCall(got.session.id, callId);
+  return got.session;
 }
 
 // Advance as far as the known fields allow (default: through the service menu, or the date
@@ -690,7 +751,7 @@ async function applyStep(page, step) {
   return { ok: false, reason: 'unknown_step_type', step };
 }
 
-export async function startSession({ url = DEFAULT_URL } = {}) {
+export async function startSession({ url = DEFAULT_URL, pooled = false } = {}) {
   let browser;
   try {
     browser = await chromium.connectOverCDP(wsEndpoint());
@@ -719,7 +780,7 @@ export async function startSession({ url = DEFAULT_URL } = {}) {
     await page.waitForLoadState('networkidle', { timeout: 2500 }).catch(() => {});
     await getReynoldsFrame(page);
     const id = crypto.randomUUID();
-    sessions.set(id, { id, browser, context, page, network, createdAt: Date.now(), lastUsedAt: Date.now() });
+    sessions.set(id, { id, browser, context, page, network, pooled, createdAt: Date.now(), lastUsedAt: Date.now() });
     return { ok: true, id, state: await snapshot(page) };
   } catch (err) {
     await browser?.close().catch(() => {});
