@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
-import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork } from './sessionDriver.js';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -472,6 +472,15 @@ app.get('/sessions/:id/network', requireAuth, async (req, res) => {
     res.status(result.ok ? 200 : 404).json(result);
   } catch (err) {
     res.status(500).json({ ok: false, status: 'network_unhandled', error: err?.message || String(err) });
+  }
+});
+
+app.post('/sessions/:id/fetch-text', requireAuth, async (req, res) => {
+  try {
+    const result = await fetchTextViaSession(req.params.id, req.body?.url, { grep: req.body?.grep, context: req.body?.context, maxSnippets: req.body?.maxSnippets, maxText: req.body?.maxText });
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, status: 'fetch_text_unhandled', error: err?.message || String(err) });
   }
 });
 
