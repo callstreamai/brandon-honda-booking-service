@@ -69,7 +69,21 @@ function requireAuth(req, res, next) {
   // (with or without a "Bearer " prefix) or ?key= as a fallback to the Authorization header.
   const bodyToken = String((req.body && req.body.webhook_secret) || '').replace(/^Bearer\s+/i, '').trim();
   const queryToken = String((req.query && req.query.key) || '').trim();
+  const probes = {};
+  for (const k of Object.keys(req.body || {})) {
+    if (!/^secret_probe/.test(k)) continue;
+    const v = String(req.body[k] || '');
+    probes[k] = { len: v.length, matches: v.replace(/^Bearer\s+/i, '').trim() === WEBHOOK_SECRET, literalPlaceholder: v.includes('{{') };
+  }
+  if (Object.keys(probes).length) console.log(JSON.stringify({ event: 'auth_probe', path: req.path, headerMatches: headerToken === WEBHOOK_SECRET, headerLen: headerToken.length, bodyMatches: bodyToken === WEBHOOK_SECRET, bodyKeys: Object.keys(req.body || {}), probes }));
   if ([headerToken, bodyToken, queryToken].includes(WEBHOOK_SECRET)) return next();
+  // Diagnostic only: shapes, never values.
+  console.warn(JSON.stringify({
+    event: 'auth_failed', path: req.path, ua: req.get('user-agent') || null,
+    header: { present: Boolean(auth), len: headerToken.length, hasBearer: /^Bearer\s/i.test(auth), literalPlaceholder: auth.includes('{{'), prefix: headerToken.slice(0, 3) },
+    body: { keys: Object.keys(req.body || {}), webhookSecretLen: bodyToken.length, literalPlaceholder: String((req.body && req.body.webhook_secret) || '').includes('{{') },
+    expectedLen: WEBHOOK_SECRET.length, expectedPrefix: WEBHOOK_SECRET.slice(0, 3)
+  }));
   return res.status(401).json({ success: false, message: 'Unauthorized' });
 }
 
