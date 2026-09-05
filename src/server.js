@@ -45,19 +45,40 @@ const bookingSchema = z.object({
 
 const availabilitySchema = z.object({
   operation: z.string().optional(),
-  call_id: z.string().optional(),
-  session_id: z.string().optional(),
+  call_id: z.union([z.string(), z.null()]).optional(),
+  session_id: z.union([z.string(), z.null()]).optional(),   // Bland sends null for an unset variable
   dealer: z.string().optional(),
   vehicle_year: z.union([z.string(), z.number()]).optional(),
   vehicle_model: z.string().optional(),
-  vehicle_mileage: z.union([z.string(), z.number()]).optional(),
+  vehicle_mileage: z.union([z.string(), z.number(), z.null()]).optional(),
   service_label: z.string().optional(),
-  service_free_text: z.string().optional(),
+  service_free_text: z.union([z.string(), z.null()]).optional(),
   service_concern: z.string().optional(),
   transportation_plan: z.string().optional(),
   transport_option: z.string().optional(),
-  preferred_date: z.string().min(1).optional()
+  preferred_date: z.union([z.string().min(1), z.null()]).optional()   // MM/DD/YYYY, or "soonest"
 });
+
+// Eastern-time calendar helpers for the "soonest" search. Service days are Monday to Saturday.
+function easternToday() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).formatToParts(new Date());
+  const g = t => Number(parts.find(x => x.type === t).value);
+  return { y: g('year'), m: g('month'), d: g('day'), hour: g('hour') % 24 };
+}
+function addDays({ y, m, d }, n) { const dt = new Date(Date.UTC(y, m - 1, d + n)); return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate(), dow: dt.getUTCDay() }; }
+const fmtUs = ({ y, m, d }) => `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${y}`;
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const dayLabel = ({ y, m, d, dow }) => `${DAY_NAMES[dow]}, ${MONTH_NAMES[m - 1]} ${d}`;
+// Candidate service days for "soonest": today if it is still morning in Tampa, else tomorrow; no Sundays; up to 5 tries.
+function soonestCandidates(max = 5) {
+  const t = easternToday();
+  let start = addDays(t, t.hour < 12 ? 0 : 1);
+  const out = [];
+  for (let i = 0; out.length < max && i < 10; i++) { const c = addDays(start, i); if (c.dow !== 0) out.push(c); }
+  return out;
+}
+const isSoonest = v => /^(soonest|asap|earliest|next|first available|any)$/i.test(String(v || '').trim());
 
 const inMemoryRequests = new Map();
 
@@ -373,26 +394,50 @@ app.post('/availability', requireAuth, async (req, res) => {
     return res.status(200).json({ ...base, success: false, status: 'availability_disabled', slots: [], available_slots: [], message: 'Live availability is disabled by LIVE_AVAILABILITY_ENABLED=false.' });
   }
   if (!input.preferred_date) {
-    return res.status(200).json({ ...base, success: false, status: 'missing_date', slots: [], available_slots: [], message: 'preferred_date (MM/DD/YYYY) is required.' });
+    return res.status(200).json({ ...base, success: false, status: 'missing_date', slots: [], available_slots: [], message: 'preferred_date (MM/DD/YYYY or "soonest") is required.' });
   }
   const debug = String(req.query?.debug || req.body?.debug || '') === '1';
   try {
-    const result = await collectAvailability(input.session_id, input);
-    const slots = Array.isArray(result.slots) ? result.slots : [];
-    const success = Boolean(result.ok) && slots.length > 0;
+    const t0 = Date.now();
+    // "soonest": walk the next service days in order on the same session until one has open times.
+    const candidates = isSoonest(input.preferred_date)
+      ? soonestCandidates(5)
+      : [(() => { const m = String(input.preferred_date).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? addDays({ y: Number(m[3]), m: Number(m[2]), d: Number(m[1]) }, 0) : null; })()].filter(Boolean);
+    if (!candidates.length) return res.status(200).json({ ...base, success: false, status: 'bad_date', slots: [], available_slots: [], message: 'preferred_date must be MM/DD/YYYY or "soonest".' });
+    let result = null, used = null; const tried = [];
+    let sessionId = input.session_id || undefined;
+    for (const c of candidates) {
+      const dateStr = fmtUs(c);
+      result = await collectAvailability(sessionId, { ...input, preferred_date: dateStr });
+      sessionId = result.session_id || sessionId;
+      const n = Array.isArray(result.slots) ? result.slots.length : 0;
+      tried.push({ date: dateStr, status: result.ok ? (n ? 'open' : 'none') : result.status, count: n });
+      if (result.ok && n > 0) { used = c; break; }
+      if (!result.ok && !['date_not_available', 'no_openings'].includes(result.status)) break;   // real failure: stop, fail closed
+      if (Date.now() - t0 > 34000) break;   // leave headroom under Bland's 45 s webhook timeout
+    }
+    used = used || candidates[tried.length - 1] || candidates[0];
+    const dateUsed = fmtUs(used);
+    const slots = result && Array.isArray(result.slots) ? result.slots : [];
+    const success = Boolean(result && result.ok) && slots.length > 0;
     const body = {
       ...base,
+      date: dateUsed,
+      preferred_date: dateUsed,
+      day_label: dayLabel(used),
+      searched_forward: isSoonest(input.preferred_date),
+      dates_tried: tried,
       success,
-      status: success ? 'availability_live' : (result.ok ? 'no_openings' : result.status),
+      status: success ? 'availability_live' : (result && result.ok ? 'no_openings' : (result && result.status) || 'unknown'),
       slots,
       available_slots: slots,
-      session_id: result.session_id || input.session_id || null,
-      transport_matched: result.transport_matched || null,
-      stage: result.stage || null,
+      session_id: (result && result.session_id) || input.session_id || null,
+      transport_matched: (result && result.transport_matched) || null,
+      stage: (result && result.stage) || null,
       message: success
-        ? `${slots.length} open time${slots.length === 1 ? '' : 's'} on ${input.preferred_date} for ${base.transport_option}.`
-        : (result.ok ? `No open times on ${input.preferred_date} for ${base.transport_option}.` : `Could not read availability from the scheduler (${result.status}). Transfer caller to the service team.`),
-      elapsed_ms: result.elapsed_ms || null
+        ? `${slots.length} open time${slots.length === 1 ? '' : 's'} on ${dayLabel(used)} (${dateUsed}) for ${base.transport_option}.`
+        : (result && result.ok ? `No open times on ${dateUsed} for ${base.transport_option}.` : `Could not read availability from the scheduler (${(result && result.status) || 'unknown'}). Transfer caller to the service team.`),
+      elapsed_ms: Date.now() - t0
     };
     if (debug || !success) body.debug = { trace: result.trace, last_screen_text: result.last_screen_text, error: result.error, detail: result.detail };
     console.log(JSON.stringify({ event: 'availability', call_id: input.call_id || null, success, status: body.status, count: slots.length, elapsed_ms: body.elapsed_ms, trace: result.trace }));
@@ -448,10 +493,19 @@ app.post('/customer/lookup', requireAuth, async (req, res) => {
     // Bind the caller's own portal session while the lookup runs, so the pre-warm no longer needs
     // its own pathway step. Both run in parallel; the lookup uses a separate throwaway session.
     const callId = body.call_id ? String(body.call_id) : undefined;
-    const [result, bound] = await Promise.all([
-      lookupCustomer({ phone, email: body.email }),
-      callId ? acquireBoundSession(callId, SCHEDULER_URL).catch(err => ({ error: { error: String(err?.message || err) } })) : Promise.resolve(null)
-    ]);
+    // Bind first (instant from the pool), then run the lookup in its own throwaway session, so the
+    // two never race for the last pooled browser.
+    let bound = null;
+    if (callId) {
+      bound = await acquireBoundSession(callId, SCHEDULER_URL).catch(err => ({ error: { error: String(err?.message || err) } }));
+      if (!bound || !bound.id) {
+        console.warn(JSON.stringify({ event: 'session_bind_failed', call_id: callId, error: bound && bound.error ? bound.error.error : 'unknown' }));
+        // one retry after a beat; a cold start is still far cheaper than losing the call later
+        bound = await new Promise(r => setTimeout(r, 400)).then(() => acquireBoundSession(callId, SCHEDULER_URL)).catch(err => ({ error: { error: String(err?.message || err) } }));
+        if (!bound || !bound.id) console.warn(JSON.stringify({ event: 'session_bind_failed', call_id: callId, retry: true, error: bound && bound.error ? bound.error.error : 'unknown' }));
+      }
+    }
+    const result = await lookupCustomer({ phone, email: body.email });
     console.log(JSON.stringify({ event: 'customer_lookup', call_id: callId || null, ok: result.ok, status: result.status, found: result.found, vehicles: result.vehicle_count || 0, elapsed_ms: result.elapsed_ms, session_id: bound && bound.id || null, session_from_pool: bound ? Boolean(bound.fromPool || bound.reused) : null }));
     res.status(200).json({ ...result, call_id: callId || null, session_id: bound && bound.id || null, session_ok: Boolean(bound && bound.id) });
   } catch (err) {
