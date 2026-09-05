@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
-import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId } from './sessionDriver.js';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -461,6 +461,17 @@ app.post('/sessions/:id/step', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('session_step_unhandled', err);
     res.status(500).json({ ok: false, status: 'session_step_unhandled', error: err?.message || String(err) });
+  }
+});
+
+// Captured portal API traffic for a session (mapping aid for a direct-API integration).
+app.get('/sessions/:id/network', requireAuth, async (req, res) => {
+  try {
+    const id = resolveSessionId({ session_id: req.params.id, call_id: req.query?.call_id }) || req.params.id;
+    const result = await getSessionNetwork(id, req.query?.since);
+    res.status(result.ok ? 200 : 404).json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, status: 'network_unhandled', error: err?.message || String(err) });
   }
 });
 
