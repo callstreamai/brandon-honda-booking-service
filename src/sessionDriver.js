@@ -10,8 +10,13 @@ function wsEndpoint() {
   const token = process.env.BROWSERLESS_API_KEY;
   const region = process.env.BROWSERLESS_REGION || 'production-sfo.browserless.io';
   if (!token) throw new Error('BROWSERLESS_API_KEY is not configured');
-  return `wss://${region}/chromium?token=${encodeURIComponent(token)}&timeout=300000&blockAds=true`;
+  return `wss://${region}/chromium?token=${encodeURIComponent(token)}&timeout=${BROWSERLESS_TIMEOUT_MS}&blockAds=true`;
 }
+// Browserless closes the remote browser this long after connect, no matter what the page is doing.
+// Every session therefore has a hard expiry; the pool must never hand out one that cannot outlive a call.
+const BROWSERLESS_TIMEOUT_MS = Number(process.env.BROWSERLESS_TIMEOUT_MS || String(15 * 60 * 1000));
+const CALL_RESERVE_MS = Number(process.env.SESSION_CALL_RESERVE_MS || String(6 * 60 * 1000));
+const isClosedError = err => /has been closed|Target closed|browser has been closed|Session closed|Connection closed|disconnected|WebSocket is not open|Target page, context or browser/i.test(String(err && (err.message || err)));
 
 export function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -602,6 +607,10 @@ async function walk(session, input, until = 'grid') {
     }
     return fail('too_many_screens');
   } catch (err) {
+    if (isClosedError(err) || (session.browser && session.browser.isConnected && !session.browser.isConnected())) {
+      note('session_dead', { error: String(err && err.message || err).slice(0, 160), age_ms: Date.now() - session.createdAt });
+      return { restart: true, reason: 'session_closed', trace };
+    }
     return { ok: false, status: 'walk_exception', error: serializeError(err), stage: session.stage, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
   }
 }
@@ -614,11 +623,14 @@ async function walk(session, input, until = 'grid') {
 const POOL = []; // ids of ready, unbound sessions
 let warming = 0;
 const POOL_SIZE = Math.max(0, Number(process.env.SESSION_POOL_SIZE || '1'));
-const POOL_MAX_AGE_MS = Number(process.env.SESSION_POOL_MAX_AGE_MS || String(8 * 60 * 1000));
+const POOL_MAX_AGE_MS = Math.min(Number(process.env.SESSION_POOL_MAX_AGE_MS || String(5 * 60 * 1000)), BROWSERLESS_TIMEOUT_MS - CALL_RESERVE_MS);
+
+function sessionLifeLeft(session) { return session.createdAt + BROWSERLESS_TIMEOUT_MS - Date.now(); }
 
 function poolFresh(session) {
   if (!session) return false;
   if (Date.now() - session.createdAt > POOL_MAX_AGE_MS) return false;
+  if (sessionLifeLeft(session) < CALL_RESERVE_MS) return false;
   try { if (session.browser && session.browser.isConnected && !session.browser.isConnected()) return false; } catch (_e) {}
   return true;
 }
@@ -669,7 +681,12 @@ poolTopUp();
 
 async function getOrStartSession(ref = {}) {
   const id = resolveSessionId(ref);
-  if (id) return { session: sessions.get(id), startedHere: false };
+  if (id) {
+    const existing = sessions.get(id);
+    const alive = existing && !(existing.browser && existing.browser.isConnected && !existing.browser.isConnected());
+    if (existing && alive) return { session: existing, startedHere: false };
+    if (existing) { console.log(JSON.stringify({ event: 'session_replaced', reason: 'dead', call_id: ref.call_id || null, age_ms: Date.now() - existing.createdAt })); sessions.delete(id); existing.browser?.close().catch(() => {}); }
+  }
   const got = await acquireSession();
   if (got.error) return { error: got.error };
   if (ref.call_id) bindSessionToCall(got.session.id, ref.call_id);
@@ -716,7 +733,11 @@ export async function advanceSession(ref, input = {}, { until, wait = false } = 
     }
     return r;
   });
-  if (!wait) return { ok: true, accepted: true, session_id: session.id, target, started_here: got.startedHere };
+  if (!wait) {
+    job.then(r => console.log(JSON.stringify({ event: 'advance_done', call_id: ref.call_id || null, target, ok: r && r.ok, status: r && r.status, stage: r && r.stage, waiting_for: r && r.waiting_for, elapsed_ms: r && r.elapsed_ms, dead: (r && r.trace || []).some(t => t.screen === 'session_dead') || undefined })))
+       .catch(err => console.warn(JSON.stringify({ event: 'advance_done', call_id: ref.call_id || null, target, ok: false, error: String(err && err.message || err).slice(0, 200) })));
+    return { ok: true, accepted: true, session_id: session.id, target, started_here: got.startedHere };
+  }
   return { ...(await job), started_here: got.startedHere };
 }
 
