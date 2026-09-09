@@ -669,8 +669,10 @@ app.post('/book-service', requireAuth, async (req, res) => {
     confirmation_number: booked.confirmation_number || null,
     date: parsed.data.preferred_date,
     time: parsed.data.preferred_time,
+    portal_date: booked.portal_date || null,
+    portal_time: booked.portal_time || null,
     message: booked.success
-      ? `Appointment booked for ${parsed.data.preferred_date} at ${parsed.data.preferred_time}${booked.confirmation_number ? ', confirmation ' + booked.confirmation_number : ''}.`
+      ? `Appointment added in the scheduler for ${booked.portal_date || parsed.data.preferred_date} at ${booked.portal_time || parsed.data.preferred_time}. The portal says an email confirmation is on its way${booked.confirmation_number ? '; confirmation ' + booked.confirmation_number : ''}.`
       : booked.status === 'ready_not_submitted'
         ? 'Safe mode: the request reached the scheduler review screen but was not submitted. Transfer caller to the service team.'
         : `Could not complete the booking in the scheduler (${booked.status}). Nothing was booked. Transfer caller to the service team.`,
