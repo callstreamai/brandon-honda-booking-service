@@ -1041,23 +1041,29 @@ export async function bookInSession(ref, input = {}, { live = false } = {}) {
       const add = await applyStep(page(), { type: 'clickText', pattern: '^ADD APPOINTMENT$', pick: 'last', force: true });
       note('add_appointment', { ok: add.ok });
       if (add.ok === false) return fail('add_appointment_not_clickable');
-      const changed = await page().waitForFunction(prev => (document.body?.innerText || '').replace(/\s+/g, ' ').trim() !== prev, beforeText, { timeout: 20000 }).then(() => true).catch(() => false);
-      await page().waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
-      await page().waitForTimeout(800);
+      // The portal REPLACES the page with a "Congratulations! ... Your appointment was added!" screen
+      // (verified live 2026-09-09), after a blank transition. Wait for that text, or for an error.
+      const SUCCESS_RE = /Congratulations|Your appointment was added|appointment (has been|was) (added|scheduled|booked)/i;
+      const ERROR_RE = /(error|unable|could not|try again|something went wrong|not available|no longer available)/i;
+      const changed = await page().waitForFunction(([okSrc, errSrc]) => { const t = document.body?.innerText || ''; return new RegExp(okSrc, 'i').test(t) || new RegExp(errSrc, 'i').test(t); }, [SUCCESS_RE.source, ERROR_RE.source], { timeout: 25000 }).then(() => true).catch(() => false);
+      await page().waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
       const after = await text();
-      const delta = after.startsWith(beforeText) ? after.slice(beforeText.length) : after.replace(beforeText.slice(0, 200), '');
+      const delta = after.startsWith(beforeText) ? after.slice(beforeText.length) : after;
       const apiCalls = session.network.slice(netBefore).map(e => { const m = (e.postData || '').match(/"command"\s*:\s*"([A-Za-z]+)"/); return { cmd: m ? m[1] : (e.url || '').slice(-40), status: e.status, body: String(e.body || '').slice(0, 300) }; });
       const bookingCall = apiCalls.find(c => /appt|appointment|book|schedule|reserve|writeup/i.test(c.cmd));
       const apiError = bookingCall && /"errMsg"\s*:\s*"(?!0000|\s*")[^"]+"|"retCode"\s*:\s*"(?!0000)\d+"/i.test(bookingCall.body) ? bookingCall.body.slice(0, 200) : null;
-      const textOk = /(confirm|scheduled|booked|thank you|appointment (has been|was|is) (added|set|created|scheduled)|see you|we look forward)/i.test(delta) && !/(error|unable|could not|try again|something went wrong)/i.test(delta);
-      const stillOnReview = /ADD APPOINTMENT Click to (confirm|move)/i.test(after.slice(-200));
+      const textOk = SUCCESS_RE.test(delta) && !ERROR_RE.test(delta.slice(0, 400));
+      const stillOnReview = /review your options/i.test(after) && !SUCCESS_RE.test(after);
       const confirmed = changed && textOk && !apiError && !stillOnReview;
       const num = delta.match(/confirmation\s*(?:number|#|no\.?|code)?\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{3,})/i);
       const errMsg = delta.match(/(error|unable|could not|try again|something went wrong)[^.]{0,160}/i);
       console.log(JSON.stringify({ event: 'booking_submitted', call_id: ref.call_id || null, confirmed, changed, textOk, stillOnReview, apiError, apiCalls, delta: delta.slice(0, 1500) }));
       note('after_submit', { changed, confirmed, delta: delta.slice(0, 600), apiCalls: apiCalls.map(c => c.cmd) });
       if (!confirmed) return fail('submit_unconfirmed', { portal_message: apiError || (errMsg ? errMsg[0] : null), last_text: delta.slice(0, 600), api_calls: apiCalls.map(c => c.cmd) });
-      return { ok: true, success: true, status: 'booked', confirmation_number: num ? num[1] : null, portal_text: delta.slice(0, 800), review, confirmation_method: pick, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
+      const when = delta.match(/(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),\s+([A-Z][a-z]+ \d{1,2}, \d{4})\s*\|\s*(\d{1,2}:\d{2}\s*[ap]m)/i);
+      // release the browser: the appointment exists, nothing more to do in this session
+      setTimeout(() => { sessions.delete(session.id); session.browser?.close().catch(() => {}); poolTopUp(); }, 1500);
+      return { ok: true, success: true, status: 'booked', confirmation_number: num ? num[1] : null, portal_text: delta.slice(0, 800), portal_date: when ? when[2] : null, portal_time: when ? when[3] : null, review, confirmation_method: pick, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
     } catch (err) {
       if (isClosedError(err)) return fail('session_closed', { error: serializeError(err) });
       return fail('booking_exception', { error: serializeError(err) });
