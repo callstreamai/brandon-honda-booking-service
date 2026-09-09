@@ -656,6 +656,11 @@ app.post('/book-service', requireAuth, async (req, res) => {
   let booked;
   try {
     const bookingInput = { ...parsed.data, caller_phone: resolvePhone({ ...parsed.data, from: req.body?.from }) || parsed.data.caller_phone };
+    if (/\*/.test(String(bookingInput.customer_name || '')) || /\*/.test(String(bookingInput.customer_email || ''))) {
+      const r = { success: false, status: 'masked_contact_details', message: 'Name or email arrived masked (asterisks); the portal rejects them. Nothing was booked. Transfer caller to the service team.', date: parsed.data.preferred_date, time: parsed.data.preferred_time, live_submit_enabled: LIVE_BOOKING_ENABLED, dealer: DEALER_NAME, address: DEALER_ADDRESS, call_id: parsed.data.call_id || null };
+      console.warn(JSON.stringify({ event: 'book_service', call_id: parsed.data.call_id || null, success: false, status: r.status }));
+      return res.status(200).json(r);
+    }
     booked = await Promise.race([
       bookInSession({ session_id: parsed.data.session_id || undefined, call_id: parsed.data.call_id || undefined }, bookingInput, { live: LIVE_BOOKING_ENABLED && String(req.body?.dry_run || '') !== '1' }),
       new Promise(r => setTimeout(() => r({ ok: false, success: false, status: 'booking_timeout', trace: [] }), 36000))
