@@ -614,15 +614,20 @@ async function walk(session, input, until = 'grid') {
           // Click the day, then wait for the header to name that date (the grid follows it). A click that
           // lands while the reopened calendar is still animating is ignored, so retry once.
           const headerRe = new RegExp(`\\b${MONTHS[inp.date.month - 1]}\\s+${inp.date.day}\\b`, 'i');
-          let picked = false;
-          for (let attempt = 0; attempt < 2 && !picked; attempt++) {
-            const r = await applyStep(page, { type: 'clickText', pattern: '^' + inp.date.day + '$', pick: 'first' });
-            note('day_click', { day: inp.date.day, ok: r.ok, reason: r.reason, attempt: attempt + 1 });
-            if (r.ok === false) return fail('date_not_selectable', { date: inp.dateKey });
-            picked = await page.waitForFunction(re => new RegExp(re, 'i').test(document.body?.innerText || '') && !/Which day would you like/i.test(document.body?.innerText || ''), headerRe.source, { timeout: 6000 }).then(() => true).catch(() => false);
+          const gridUp = () => page.waitForFunction(re => new RegExp(re, 'i').test(document.body?.innerText || '') && !/Which day would you like/i.test(document.body?.innerText || ''), headerRe.source, { timeout: 3500 }).then(() => true).catch(() => false);
+          const r = await applyStep(page, { type: 'clickText', pattern: '^' + inp.date.day + '$', pick: 'first' });
+          note('day_click', { day: inp.date.day, ok: r.ok, reason: r.reason });
+          if (r.ok === false) return fail('date_not_selectable', { date: inp.dateKey });
+          let picked = await gridUp();
+          if (!picked) {
+            // A day that is already selected (the calendar's default) ignores the click; the footer PROCEED loads its grid.
+            const pr = await applyStep(page, { type: 'clickText', pattern: '^PROCEED$', pick: 'last', noFallback: true });
+            note('day_proceed', { ok: pr.ok, reason: pr.reason });
+            picked = await gridUp();
+            if (!picked) { const r2 = await applyStep(page, { type: 'clickText', pattern: '^' + inp.date.day + '$', pick: 'first' }); note('day_click', { day: inp.date.day, ok: r2.ok, retry: true }); picked = await gridUp(); }
           }
           // the grid takes a few seconds to render after the day is chosen
-          await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 12000 }).catch(() => {});
+          await page.waitForFunction(() => /\b(0?\d|1[0-2]):[0-5]\d\s?(am|pm)\b/i.test(document.body?.innerText || ''), null, { timeout: 8000 }).catch(() => {});
         }
         await page.waitForTimeout(500);
         continue;
@@ -898,6 +903,123 @@ export async function fetchTextViaSession(id, url, { grep, context = 300, maxSni
   } catch (err) {
     return { ok: false, status: 'fetch_failed', error: serializeError(err) };
   }
+}
+
+// ---- Booking write path -----------------------------------------------------------------
+// Continues the caller's own session from the time grid: click the chosen time in the chosen
+// transport row, PROCEED, fill the contact screen ("Almost There!"), PROCEED, land on the review
+// screen ("review your options"), pick the confirmation method, and then either stop (safe mode:
+// status ready_not_submitted, success false) or click ADD APPOINTMENT and read the confirmation.
+// success is true only when the review screen is gone and the portal shows a confirmation.
+export async function bookInSession(ref, input = {}, { live = false } = {}) {
+  const t0 = Date.now();
+  const got = await getOrStartSession(ref);
+  if (got.error) return { ok: false, success: false, status: 'session_start_failed', error: got.error.error, trace: [] };
+  let session = got.session;
+  return withSessionLock(session, async () => {
+    const trace = [];
+    const note = (screen, extra) => trace.push({ t: Date.now() - t0, screen, ...(extra || {}) });
+    const fail = (status, extra) => ({ ok: false, success: false, status, ...(extra || {}), session_id: session.id, elapsed_ms: Date.now() - t0, trace });
+    const page = () => session.page;
+    const text = async () => (await getReynoldsFrame(page())).evaluate(() => (document.body?.innerText || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+    const has = (t, n) => t.toLowerCase().includes(String(n).toLowerCase());
+    const waitText = (re, ms) => page().waitForFunction(src => new RegExp(src, 'i').test(document.body?.innerText || ''), re.source, { timeout: ms }).then(() => true).catch(() => false);
+    try {
+      const transport = input.transport_option || input.transportation_plan || 'I am dropping off my vehicle.';
+      const time = String(input.preferred_time || '').trim();
+      const isAfterHours = transport.toLowerCase().includes(AFTER_HOURS_LABEL);
+      if (!time && !isAfterHours) return fail('missing_time');
+      let t = await text();
+      // 1. get to the grid for the right date (idempotent walk), unless we are already past it
+      if (!has(t, 'Almost There') && !has(t, 'review your options')) {
+        let r = await walk(session, input, 'grid');
+        if (r.restart) {
+          const fresh = await restartSession(session, ref.call_id);
+          if (!fresh) return fail('restart_failed');
+          session = fresh; note('restart', { reason: r.reason });
+          r = await walk(fresh, input, 'grid');
+        }
+        trace.push(...(r.trace || []));
+        if (!r.ok) return fail(r.status || 'walk_failed', { detail: r });
+        if (r.waiting_for) return fail('missing_' + r.waiting_for);
+        // 2. time in the transport row, then PROCEED to the contact screen
+        const slot = isAfterHours ? 'Before 06:00am' : time;
+        const frame = await getReynoldsFrame(page());
+        const tr = await clickTimeInTransportRow(frame, transport, slot);
+        note('time_click', { ok: tr.ok, time: slot, matched: tr.timeMatched, row: tr.transportMatched, reason: tr.reason });
+        if (!tr.ok) return fail('time_not_available', { time: slot, transport, detail: tr });
+        await page().waitForFunction(() => Array.from(document.querySelectorAll('button, [role="button"]')).some(b => (b.innerText || '').trim() === 'PROCEED' && !b.disabled && b.getBoundingClientRect().height > 0), null, { timeout: 8000 }).catch(() => {});
+        const p1 = await applyStep(page(), { type: 'clickText', pattern: '^PROCEED$', pick: 'last', force: true });
+        note('proceed_to_contact', { ok: p1.ok });
+        if (!await waitText(/Almost There/, 12000)) return fail('contact_screen_not_reached', { last_text: (await text()).slice(0, 300) });
+        t = await text();
+      }
+      // 3. contact screen
+      if (has(t, 'Almost There')) {
+        const name = String(input.customer_name || '').trim();
+        const first = name.split(/\s+/)[0] || '';
+        const last = name.split(/\s+/).slice(1).join(' ') || first;
+        const phone = String(input.caller_phone || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+        const email = String(input.customer_email || '').trim();
+        if (!first) return fail('missing_name');
+        if (phone.length !== 10) return fail('missing_phone');
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail('email_required');
+        const fills = [
+          await applyStep(page(), { type: 'fill', selector: '#firstName_input', value: first }),
+          await applyStep(page(), { type: 'fill', selector: '#lastName_input', value: last }),
+          await applyStep(page(), { type: 'fill', selector: '#phoneNumber_input', value: phone }),
+          await applyStep(page(), { type: 'fill', selector: '#email_input', value: email }),
+        ];
+        note('contact_fill', { ok: fills.map(f => f.ok) });
+        if (fills.some(f => f.ok === false)) return fail('contact_fill_failed', { fills });
+        await page().waitForTimeout(400);
+        const p2 = await applyStep(page(), { type: 'clickText', pattern: '^PROCEED$', pick: 'last', force: true });
+        note('proceed_to_review', { ok: p2.ok });
+        if (!await waitText(/review your options/, 12000)) return fail('review_screen_not_reached', { last_text: (await text()).slice(0, 400) });
+        t = await text();
+      }
+      if (!has(t, 'review your options')) return fail('unexpected_screen', { last_text: t.slice(0, 400) });
+      // 4. review screen: check what the portal is about to book
+      const d = parseUsDate(input.preferred_date);
+      const monthName = d ? ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.month - 1] : '';
+      const dateOk = d ? new RegExp(`${monthName}\\s+${d.day},\\s+${d.year}`, 'i').test(t) : false;
+      const slotShown = isAfterHours ? /Before 0?6:00am/i.test(t) : new RegExp(time.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(t);
+      const review = { text: t.slice(0, 1500), date_shown: dateOk, time_shown: slotShown };
+      note('review', review);
+      if (!dateOk || !slotShown) return fail('review_mismatch', { review });
+      // confirmation method (required on the portal). Email when we have one; Text/Both per the caller.
+      const method = String(input.confirmation_method || '').toLowerCase();
+      const pick = method === 'both' ? 'Both' : method === 'text' ? 'Text' : 'Email';
+      const cm = await applyStep(page(), { type: 'clickText', pattern: '^' + pick + '$', pick: 'last' });
+      note('confirmation_method', { pick, ok: cm.ok });
+      // mileage field on the review screen, if it is empty and we know it
+      const miles = String(input.vehicle_mileage || '').replace(/\D/g, '');
+      if (miles) {
+        const cur = await (await getReynoldsFrame(page())).evaluate(() => document.querySelector('#prevMileage_input')?.value || '').catch(() => '');
+        if (!cur) { const mf = await applyStep(page(), { type: 'fill', selector: '#prevMileage_input', value: miles }); note('mileage_fill', { ok: mf.ok }); }
+      }
+      if (!live) {
+        return { ok: true, success: false, status: 'ready_not_submitted', message: 'Reached the review screen; ADD APPOINTMENT not clicked (LIVE_BOOKING_ENABLED is not true).', review, confirmation_method: pick, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
+      }
+      // 5. submit
+      const add = await applyStep(page(), { type: 'clickText', pattern: '^ADD APPOINTMENT$', pick: 'last', force: true });
+      note('add_appointment', { ok: add.ok });
+      if (add.ok === false) return fail('add_appointment_not_clickable');
+      const left = await page().waitForFunction(() => !/review your options/i.test(document.body?.innerText || ''), null, { timeout: 20000 }).then(() => true).catch(() => false);
+      await page().waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
+      const after = await text();
+      const confirmed = left && /(confirm|scheduled|booked|thank you|appointment (has been|was|is) (added|set|created))/i.test(after) && !/error|unable|could not|try again/i.test(after.slice(0, 600));
+      const num = after.match(/confirmation\s*(?:number|#|no\.?|code)?\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{3,})/i);
+      const errMsg = after.match(/(error|unable|could not|try again)[^.]{0,160}/i);
+      console.log(JSON.stringify({ event: 'booking_submitted', call_id: ref.call_id || null, confirmed, left_review: left, screen: after.slice(0, 1500) }));
+      note('after_submit', { left_review: left, confirmed, text: after.slice(0, 600) });
+      if (!confirmed) return fail('submit_unconfirmed', { portal_message: errMsg ? errMsg[0] : null, last_text: after.slice(0, 600) });
+      return { ok: true, success: true, status: 'booked', confirmation_number: num ? num[1] : null, portal_text: after.slice(0, 800), review, confirmation_method: pick, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
+    } catch (err) {
+      if (isClosedError(err)) return fail('session_closed', { error: serializeError(err) });
+      return fail('booking_exception', { error: serializeError(err) });
+    }
+  });
 }
 
 // ---- Customer lookup (phone or email) --------------------------------------------
