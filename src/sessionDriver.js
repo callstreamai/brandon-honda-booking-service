@@ -1003,7 +1003,7 @@ export async function bookInSession(ref, input = {}, { live = false } = {}) {
       // 4. review screen: check what the portal is about to book
       const d = parseUsDate(input.preferred_date);
       const monthName = d ? ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.month - 1] : '';
-      const dateOk = d ? new RegExp(`${monthName}\\s+${d.day},\\s+${d.year}`, 'i').test(t) : false;
+      const dateOk = d ? new RegExp(`${monthName}\\s+0?${d.day},\\s+${d.year}`, 'i').test(t) : false;   // portal prints 'September 09, 2026'
       const slotShown = isAfterHours ? /Before 0?6:00am/i.test(t) : new RegExp(time.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(t);
       const review = { text: t.slice(0, 1500), date_shown: dateOk, time_shown: slotShown };
       note('review', review);
