@@ -1184,12 +1184,18 @@ export async function lookupCustomer({ phone, email } = {}) {
       return { ok: false, success: false, found: false, status: 'portal_error', ret_code: retCode, message: errMsg.slice(0, 200), elapsed_ms: Date.now() - t0, trace };
     }
     const rec = mineCustomerRecord(app);
+    // The portal masks PII in its guest lookup reply ("V**********", "v*****e@*****.com", "(***) ***-0548").
+    // Masked values are useless downstream (and read aloud badly), so drop them and flag it; the
+    // vehicles come through in clear and are the real value of the lookup.
+    const masked = v => /\*/.test(String(v || ''));
+    const pii_masked = ['first_name', 'last_name', 'email', 'phone'].some(k => masked(rec[k]));
+    for (const k of ['first_name', 'last_name', 'email', 'phone']) if (masked(rec[k])) rec[k] = '';
     const vehicles = rec.vehicles.map(v => { const n = normalizePortalModel(v.model); return { ...v, portal_model: n.model, needs_variant: n.needs_variant, unmapped: Boolean(n.unmapped) }; });
     const vehicle_summary = vehicles.map(v => [v.year, v.make || 'Honda', v.portal_model].filter(Boolean).join(' ')).join(' and ');
     const first = vehicles[0] || null;
     console.log(JSON.stringify({ event: 'customer_lookup_found', keys: app && typeof app === 'object' ? Object.keys(app).slice(0, 40) : [], vehicles: vehicles.length, hasName: Boolean(rec.first_name), raw: JSON.stringify(app).slice(0, 4000) }));
     return {
-      ok: true, success: true, found: true, status: 'found',
+      ok: true, success: true, found: true, status: 'found', pii_masked,
       first_name: rec.first_name, last_name: rec.last_name, customer_name: [rec.first_name, rec.last_name].filter(Boolean).join(' '),
       email: rec.email, phone: rec.phone || digits,
       vehicle_count: vehicles.length, vehicles, vehicle_summary,
