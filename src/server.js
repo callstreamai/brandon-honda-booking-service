@@ -657,7 +657,7 @@ app.post('/book-service', requireAuth, async (req, res) => {
   try {
     const bookingInput = { ...parsed.data, caller_phone: resolvePhone({ ...parsed.data, from: req.body?.from }) || parsed.data.caller_phone };
     booked = await Promise.race([
-      bookInSession({ session_id: parsed.data.session_id || undefined, call_id: parsed.data.call_id || undefined }, bookingInput, { live: LIVE_BOOKING_ENABLED }),
+      bookInSession({ session_id: parsed.data.session_id || undefined, call_id: parsed.data.call_id || undefined }, bookingInput, { live: LIVE_BOOKING_ENABLED && String(req.body?.dry_run || '') !== '1' }),
       new Promise(r => setTimeout(() => r({ ok: false, success: false, status: 'booking_timeout', trace: [] }), 36000))
     ]);
   } catch (err) {
