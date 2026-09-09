@@ -19,11 +19,41 @@ app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('combined'));
 
+// Bland sends a variable that was never set as its literal placeholder ("{{preferred_date}}") or as
+// null, depending on the node. Treat both as "not provided" everywhere.
+app.use((req, _res, next) => {
+  const scrub = v => {
+    if (typeof v === 'string') return /^\s*\{\{[^}]*\}\}\s*$/.test(v) ? null : v;
+    if (Array.isArray(v)) return v.map(scrub);
+    if (v && typeof v === 'object') { for (const k of Object.keys(v)) v[k] = scrub(v[k]); return v; }
+    return v;
+  };
+  if (req.body && typeof req.body === 'object') scrub(req.body);
+  next();
+});
+
+// The phone on the account: ten digits from `phone`/`caller_phone`, or the caller ID (`from`) when
+// the caller confirmed the number they are calling from (the agent only speaks its last four digits,
+// so extraction may hand back "8294" or the word caller_id).
+function resolvePhone(body) {
+  const digits = v => String(v || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+  const from = digits(body.from);
+  for (const k of ['phone', 'caller_phone', 'account_phone']) {
+    const d = digits(body[k]);
+    if (d.length === 10) return d;
+    if (/caller[_ ]?id|calling from/i.test(String(body[k] || '')) && from.length === 10) return from;
+  }
+  const partial = ['phone', 'caller_phone', 'account_phone'].map(k => digits(body[k])).find(d => d.length > 0 && d.length < 10);
+  if (from.length === 10 && (!partial || from.endsWith(partial))) return from;
+  return partial || '';
+}
+
 const bookingSchema = z.object({
   operation: z.string().nullable().optional(),
   call_id: z.union([z.string().min(1), z.null()]).optional(),
   session_id: z.union([z.string(), z.null()]).optional(),
-  caller_phone: z.string().min(7).optional(),
+  caller_phone: z.union([z.string(), z.null()]).optional(),
+  from: z.union([z.string(), z.null()]).optional(),
   customer_name: z.string().min(1),
   vehicle_year: z.union([z.string(), z.number(), z.null()]).optional(),
   vehicle_model: z.string().min(1),
@@ -499,7 +529,7 @@ app.post('/next-state', requireAuth, async (req, res) => {
 // session; the caller's own session is untouched. found=false is a normal outcome, not an error.
 app.post('/customer/lookup', requireAuth, async (req, res) => {
   const body = req.body || {};
-  const phone = body.phone || body.caller_phone || body.account_phone || '';
+  const phone = resolvePhone(body);
   try {
     // Bind the caller's own portal session while the lookup runs, so the pre-warm no longer needs
     // its own pathway step. Both run in parallel; the lookup uses a separate throwaway session.
@@ -625,8 +655,9 @@ app.post('/book-service', requireAuth, async (req, res) => {
   const t0 = Date.now();
   let booked;
   try {
+    const bookingInput = { ...parsed.data, caller_phone: resolvePhone({ ...parsed.data, from: req.body?.from }) || parsed.data.caller_phone };
     booked = await Promise.race([
-      bookInSession({ session_id: parsed.data.session_id || undefined, call_id: parsed.data.call_id || undefined }, parsed.data, { live: LIVE_BOOKING_ENABLED }),
+      bookInSession({ session_id: parsed.data.session_id || undefined, call_id: parsed.data.call_id || undefined }, bookingInput, { live: LIVE_BOOKING_ENABLED }),
       new Promise(r => setTimeout(() => r({ ok: false, success: false, status: 'booking_timeout', trace: [] }), 36000))
     ]);
   } catch (err) {
