@@ -445,7 +445,7 @@ app.post('/availability', requireAuth, async (req, res) => {
     for (const c of candidates) {
       const dateStr = fmtUs(c);
       // never let one walk run past Bland's 45 s webhook timeout; fail closed with a clean status instead
-      const remaining = Math.max(3000, 40000 - (Date.now() - t0));
+      const remaining = Math.max(3000, 52000 - (Date.now() - t0));   // Bland availability webhook timeout is 58 s
       result = await Promise.race([
         collectAvailability(sessionId, { ...input, preferred_date: dateStr }),
         new Promise(r => setTimeout(() => r({ ok: false, status: 'availability_timeout', session_id: sessionId, trace: [] }), remaining))
@@ -455,7 +455,7 @@ app.post('/availability', requireAuth, async (req, res) => {
       tried.push({ date: dateStr, status: result.ok ? (n ? 'open' : 'none') : result.status, count: n });
       if (result.ok && n > 0) { used = c; break; }
       if (!result.ok && !['date_not_available', 'no_openings'].includes(result.status)) break;   // real failure: stop, fail closed
-      if (Date.now() - t0 > 34000) break;   // leave headroom under Bland's 45 s webhook timeout
+      if (Date.now() - t0 > 44000) break;   // leave headroom under Bland's 58 s webhook timeout
     }
     used = used || candidates[tried.length - 1] || candidates[0];
     const dateUsed = fmtUs(used);
