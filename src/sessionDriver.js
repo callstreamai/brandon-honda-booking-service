@@ -1008,11 +1008,23 @@ export async function bookInSession(ref, input = {}, { live = false } = {}) {
       const review = { text: t.slice(0, 1500), date_shown: dateOk, time_shown: slotShown };
       note('review', review);
       if (!dateOk || !slotShown) return fail('review_mismatch', { review });
-      // confirmation method (required on the portal). Email when we have one; Text/Both per the caller.
+      // confirmation method (required on the portal). Text/Both only with the caller's express consent
+      // (the pathway asks); otherwise Email.
       const method = String(input.confirmation_method || '').toLowerCase();
-      const pick = method === 'both' ? 'Both' : method === 'text' ? 'Text' : 'Email';
+      const smsOk = input.sms_consent === true || /^(true|yes|1)$/i.test(String(input.sms_consent || ''));
+      const pick = (method === 'both' && smsOk) ? 'Both' : (method === 'text' && smsOk) ? 'Text' : 'Email';
       const cm = await applyStep(page(), { type: 'clickText', pattern: '^' + pick + '$', pick: 'last' });
-      note('confirmation_method', { pick, ok: cm.ok });
+      note('confirmation_method', { pick, ok: cm.ok, smsOk });
+      // Choosing Text/Both opens a "Text Message Opt In" modal (express written consent for automated
+      // texts). It blocks ADD APPOINTMENT until answered. YES only with the caller's consent.
+      await page().waitForTimeout(600);
+      if (/Text Message Opt In/i.test(await text())) {
+        const ans = smsOk ? '^YES$' : '^NO$';
+        const oi = await applyStep(page(), { type: 'clickText', pattern: ans, pick: 'last' });
+        const gone = await page().waitForFunction(() => !/Text Message Opt In/i.test(document.body?.innerText || ''), null, { timeout: 5000 }).then(() => true).catch(() => false);
+        note('sms_opt_in', { answer: ans, ok: oi.ok, gone });
+        if (!gone) return fail('sms_opt_in_modal_stuck');
+      }
       // mileage field on the review screen, if it is empty and we know it
       const miles = String(input.vehicle_mileage || '').replace(/\D/g, '');
       if (miles) {
@@ -1022,20 +1034,30 @@ export async function bookInSession(ref, input = {}, { live = false } = {}) {
       if (!live) {
         return { ok: true, success: false, status: 'ready_not_submitted', message: 'Reached the review screen; ADD APPOINTMENT not clicked (LIVE_BOOKING_ENABLED is not true).', review, confirmation_method: pick, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
       }
-      // 5. submit
+      // 5. submit. The portal stacks screens in the DOM, so innerText keeps the review text after a
+      // successful add; judge by what is NEW on the page and by the portal's own API traffic.
+      const beforeText = await text();
+      const netBefore = session.network.length;
       const add = await applyStep(page(), { type: 'clickText', pattern: '^ADD APPOINTMENT$', pick: 'last', force: true });
       note('add_appointment', { ok: add.ok });
       if (add.ok === false) return fail('add_appointment_not_clickable');
-      const left = await page().waitForFunction(() => !/review your options/i.test(document.body?.innerText || ''), null, { timeout: 20000 }).then(() => true).catch(() => false);
-      await page().waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
+      const changed = await page().waitForFunction(prev => (document.body?.innerText || '').replace(/\s+/g, ' ').trim() !== prev, beforeText, { timeout: 20000 }).then(() => true).catch(() => false);
+      await page().waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
+      await page().waitForTimeout(800);
       const after = await text();
-      const confirmed = left && /(confirm|scheduled|booked|thank you|appointment (has been|was|is) (added|set|created))/i.test(after) && !/error|unable|could not|try again/i.test(after.slice(0, 600));
-      const num = after.match(/confirmation\s*(?:number|#|no\.?|code)?\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{3,})/i);
-      const errMsg = after.match(/(error|unable|could not|try again)[^.]{0,160}/i);
-      console.log(JSON.stringify({ event: 'booking_submitted', call_id: ref.call_id || null, confirmed, left_review: left, screen: after.slice(0, 1500) }));
-      note('after_submit', { left_review: left, confirmed, text: after.slice(0, 600) });
-      if (!confirmed) return fail('submit_unconfirmed', { portal_message: errMsg ? errMsg[0] : null, last_text: after.slice(0, 600) });
-      return { ok: true, success: true, status: 'booked', confirmation_number: num ? num[1] : null, portal_text: after.slice(0, 800), review, confirmation_method: pick, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
+      const delta = after.startsWith(beforeText) ? after.slice(beforeText.length) : after.replace(beforeText.slice(0, 200), '');
+      const apiCalls = session.network.slice(netBefore).map(e => { const m = (e.postData || '').match(/"command"\s*:\s*"([A-Za-z]+)"/); return { cmd: m ? m[1] : (e.url || '').slice(-40), status: e.status, body: String(e.body || '').slice(0, 300) }; });
+      const bookingCall = apiCalls.find(c => /appt|appointment|book|schedule|reserve|writeup/i.test(c.cmd));
+      const apiError = bookingCall && /"errMsg"\s*:\s*"(?!0000|\s*")[^"]+"|"retCode"\s*:\s*"(?!0000)\d+"/i.test(bookingCall.body) ? bookingCall.body.slice(0, 200) : null;
+      const textOk = /(confirm|scheduled|booked|thank you|appointment (has been|was|is) (added|set|created|scheduled)|see you|we look forward)/i.test(delta) && !/(error|unable|could not|try again|something went wrong)/i.test(delta);
+      const stillOnReview = /ADD APPOINTMENT Click to (confirm|move)/i.test(after.slice(-200));
+      const confirmed = changed && textOk && !apiError && !stillOnReview;
+      const num = delta.match(/confirmation\s*(?:number|#|no\.?|code)?\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{3,})/i);
+      const errMsg = delta.match(/(error|unable|could not|try again|something went wrong)[^.]{0,160}/i);
+      console.log(JSON.stringify({ event: 'booking_submitted', call_id: ref.call_id || null, confirmed, changed, textOk, stillOnReview, apiError, apiCalls, delta: delta.slice(0, 1500) }));
+      note('after_submit', { changed, confirmed, delta: delta.slice(0, 600), apiCalls: apiCalls.map(c => c.cmd) });
+      if (!confirmed) return fail('submit_unconfirmed', { portal_message: apiError || (errMsg ? errMsg[0] : null), last_text: delta.slice(0, 600), api_calls: apiCalls.map(c => c.cmd) });
+      return { ok: true, success: true, status: 'booked', confirmation_number: num ? num[1] : null, portal_text: delta.slice(0, 800), review, confirmation_method: pick, session_id: session.id, elapsed_ms: Date.now() - t0, trace };
     } catch (err) {
       if (isClosedError(err)) return fail('session_closed', { error: serializeError(err) });
       return fail('booking_exception', { error: serializeError(err) });
