@@ -238,6 +238,24 @@ async function clickCheckboxNearText(frame, pattern, opts = {}) {
   }
 }
 
+// Diagnostic: every element whose own text matches, with geometry, stacking and hit-test info.
+async function probeText(frame, pattern) {
+  return frame.evaluate(pattern => {
+    const re = new RegExp(pattern, 'i');
+    const out = [];
+    for (const el of Array.from(document.querySelectorAll('body *'))) {
+      const own = Array.from(el.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').replace(/\s+/g, ' ').trim();
+      const txt = (el.innerText || '').replace(/\s+/g, ' ').trim();
+      if (!re.test(own) && !(re.test(txt) && txt.length < 40)) continue;
+      const r = el.getBoundingClientRect(); const st = getComputedStyle(el);
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const top = document.elementFromPoint(cx, cy);
+      out.push({ tag: el.tagName, cls: String(el.className || '').slice(0, 80), id: el.id, own, txt: txt.slice(0, 40), x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), display: st.display, vis: st.visibility, opacity: st.opacity, pe: st.pointerEvents, z: st.zIndex, disabled: Boolean(el.disabled) || el.getAttribute('aria-disabled') === 'true' || /disabled/i.test(String(el.className || '')), hitIsSelf: top === el || (top && el.contains(top)) || (top && top.contains(el)), hitTag: top ? top.tagName + '.' + String(top.className || '').slice(0, 40) : null, inViewport: r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth, onclick: typeof el.onclick === 'function' });
+    }
+    return { ok: true, type: 'probeText', pattern, viewport: { w: innerWidth, h: innerHeight, scrollY }, matches: out.slice(0, 30) };
+  }, pattern);
+}
+
 async function fill(frame, selector, value) {
   const loc = frame.locator(selector).first();
   if (!(await loc.count())) return { ok: false, type: 'fill', selector, reason: 'not_found' };
@@ -813,6 +831,9 @@ async function applyStep(page, step) {
   if (step.type === 'clickNearbyInput') return clickNearbyInput(frame, step.pattern, step.inputType || 'checkbox');
   if (step.type === 'clickTimeInTransportRow') return clickTimeInTransportRow(frame, step.transport, step.time, { timeoutMs: step.timeoutMs || DEFAULT_CLICK_TIMEOUT_MS });
   if (step.type === 'fill') return fill(frame, step.selector, step.value);
+  if (step.type === 'probeText') return probeText(frame, step.pattern);
+  if (step.type === 'clickAt') { await frame.page().mouse.click(Number(step.x), Number(step.y)); return { ok: true, type: 'clickAt', x: step.x, y: step.y }; }
+  if (step.type === 'jsClick') return frame.evaluate(({ pattern, index }) => { const re = new RegExp(pattern, 'i'); const els = Array.from(document.querySelectorAll('button, [role="button"], a, div, span')).filter(el => re.test((el.innerText || '').replace(/\s+/g, ' ').trim())); const el = els[index] || els[els.length - 1]; if (!el) return { ok: false, reason: 'not_found' }; el.click(); return { ok: true, type: 'jsClick', count: els.length, tag: el.tagName }; }, { pattern: step.pattern, index: step.index ?? -1 });
   return { ok: false, reason: 'unknown_step_type', step };
 }
 
