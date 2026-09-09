@@ -400,9 +400,8 @@ app.post('/availability', requireAuth, async (req, res) => {
   if (!LIVE_AVAILABILITY_ENABLED) {
     return res.status(200).json({ ...base, success: false, status: 'availability_disabled', slots: [], available_slots: [], message: 'Live availability is disabled by LIVE_AVAILABILITY_ENABLED=false.' });
   }
-  if (!input.preferred_date) {
-    return res.status(200).json({ ...base, success: false, status: 'missing_date', slots: [], available_slots: [], message: 'preferred_date (MM/DD/YYYY or "soonest") is required.' });
-  }
+  // No date yet (the pathway checks right after transport) means: find the soonest opening.
+  if (!input.preferred_date || /^\s*$/.test(String(input.preferred_date))) input.preferred_date = 'soonest';
   const debug = String(req.query?.debug || req.body?.debug || '') === '1';
   try {
     const t0 = Date.now();
