@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
-import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession, acquireBoundSession, lookupCustomer } from './sessionDriver.js';
+import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession, acquireBoundSession, lookupCustomer, bookInSession } from './sessionDriver.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -20,26 +20,27 @@ app.use(express.json({ limit: '1mb' }));
 app.use(morgan('combined'));
 
 const bookingSchema = z.object({
-  operation: z.string().optional(),
-  call_id: z.string().min(1).optional(),
+  operation: z.string().nullable().optional(),
+  call_id: z.union([z.string().min(1), z.null()]).optional(),
+  session_id: z.union([z.string(), z.null()]).optional(),
   caller_phone: z.string().min(7).optional(),
   customer_name: z.string().min(1),
-  vehicle_year: z.union([z.string(), z.number()]).optional(),
+  vehicle_year: z.union([z.string(), z.number(), z.null()]).optional(),
   vehicle_model: z.string().min(1),
-  vehicle_mileage: z.union([z.string(), z.number()]).optional(),
-  service_label: z.string().optional(),
-  service_free_text: z.string().optional().default(''),
+  vehicle_mileage: z.union([z.string(), z.number(), z.null()]).optional(),
+  service_label: z.string().nullable().optional(),
+  service_free_text: z.string().nullable().optional().default(''),
   service_concern: z.string().min(1),
-  additional_services: z.string().optional().default('none'),
-  transport_option: z.string().optional(),
+  additional_services: z.string().nullable().optional().default('none'),
+  transport_option: z.string().nullable().optional(),
   transportation_plan: z.string().min(1),
   preferred_date: z.string().min(1),
   preferred_time: z.string().min(1),
-  customer_email: z.string().optional(),
-  confirmation_method: z.string().optional(),
-  sms_consent: z.union([z.boolean(), z.string()]).optional(),
-  consent_recorded: z.union([z.boolean(), z.string()]).optional(),
-  dealer: z.string().optional(),
+  customer_email: z.string().nullable().optional(),
+  confirmation_method: z.string().nullable().optional(),
+  sms_consent: z.union([z.boolean(), z.string(), z.null()]).optional(),
+  consent_recorded: z.union([z.boolean(), z.string(), z.null()]).optional(),
+  dealer: z.string().nullable().optional(),
   scheduler_url: z.string().url().optional()
 });
 
@@ -56,7 +57,8 @@ const availabilitySchema = z.object({
   service_concern: z.string().optional(),
   transportation_plan: z.string().optional(),
   transport_option: z.string().optional(),
-  preferred_date: z.union([z.string().min(1), z.null()]).optional()   // MM/DD/YYYY, or "soonest"
+  preferred_date: z.union([z.string().min(1), z.null()]).optional(),   // MM/DD/YYYY, or "soonest"
+  earliest_date: z.union([z.string(), z.null()]).optional()            // with "soonest": do not look before this MM/DD/YYYY ("next week")
 });
 
 // Eastern-time calendar helpers for the "soonest" search. Service days are Monday to Saturday.
@@ -71,9 +73,12 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const dayLabel = ({ y, m, d, dow }) => `${DAY_NAMES[dow]}, ${MONTH_NAMES[m - 1]} ${d}`;
 // Candidate service days for "soonest": today if it is still morning in Tampa, else tomorrow; no Sundays; up to 5 tries.
-function soonestCandidates(max = 5) {
+function parseUs(v) { const m = String(v || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? { y: Number(m[3]), m: Number(m[1]), d: Number(m[2]) } : null; }
+function soonestCandidates(max = 5, notBefore = null) {
   const t = easternToday();
   let start = addDays(t, t.hour < 12 ? 0 : 1);
+  const floor = parseUs(notBefore);
+  if (floor && Date.UTC(floor.y, floor.m - 1, floor.d) > Date.UTC(start.y, start.m - 1, start.d)) start = addDays(floor, 0);
   const out = [];
   // The portal shows Sunday openings for this store, so every day is a candidate; a closed day comes
   // back from the walker as date_not_available and the search simply moves on.
@@ -403,7 +408,7 @@ app.post('/availability', requireAuth, async (req, res) => {
     const t0 = Date.now();
     // "soonest": walk the next service days in order on the same session until one has open times.
     const candidates = isSoonest(input.preferred_date)
-      ? soonestCandidates(5)
+      ? soonestCandidates(5, input.earliest_date)
       : [(() => { const m = String(input.preferred_date).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? addDays({ y: Number(m[3]), m: Number(m[1]), d: Number(m[2]) }, 0) : null; })()].filter(Boolean);
     if (!candidates.length) return res.status(200).json({ ...base, success: false, status: 'bad_date', slots: [], available_slots: [], message: 'preferred_date must be MM/DD/YYYY or "soonest".' });
     let result = null, used = null; const tried = [];
@@ -616,7 +621,39 @@ app.post('/book-service', requireAuth, async (req, res) => {
   if (!parsed.success) return res.status(400).json({ success: false, message: 'Invalid booking payload', issues: parsed.error.issues });
   const key = parsed.data.call_id || `${parsed.data.caller_phone}-${parsed.data.customer_name}-${parsed.data.preferred_date}-${parsed.data.preferred_time}`;
   if (inMemoryRequests.has(key)) return res.json({ ...inMemoryRequests.get(key), idempotent_replay: true });
-  const result = await bookWithPortal(parsed.data);
+  // Continue the caller's own warm session (bound by call_id / session_id) through time -> contact ->
+  // review, and submit only when LIVE_BOOKING_ENABLED=true. Fails closed on anything unexpected.
+  const t0 = Date.now();
+  let booked;
+  try {
+    booked = await Promise.race([
+      bookInSession({ session_id: parsed.data.session_id || undefined, call_id: parsed.data.call_id || undefined }, parsed.data, { live: LIVE_BOOKING_ENABLED }),
+      new Promise(r => setTimeout(() => r({ ok: false, success: false, status: 'booking_timeout', trace: [] }), 36000))
+    ]);
+  } catch (err) {
+    booked = { ok: false, success: false, status: 'booking_unhandled', error: err?.message || String(err), trace: [] };
+  }
+  const result = {
+    success: Boolean(booked.success),
+    status: booked.status,
+    confirmation_number: booked.confirmation_number || null,
+    date: parsed.data.preferred_date,
+    time: parsed.data.preferred_time,
+    message: booked.success
+      ? `Appointment booked for ${parsed.data.preferred_date} at ${parsed.data.preferred_time}${booked.confirmation_number ? ', confirmation ' + booked.confirmation_number : ''}.`
+      : booked.status === 'ready_not_submitted'
+        ? 'Safe mode: the request reached the scheduler review screen but was not submitted. Transfer caller to the service team.'
+        : `Could not complete the booking in the scheduler (${booked.status}). Nothing was booked. Transfer caller to the service team.`,
+    review: booked.review || null,
+    portal_text: booked.portal_text || null,
+    portal_message: booked.portal_message || null,
+    live_submit_enabled: LIVE_BOOKING_ENABLED,
+    session_id: booked.session_id || parsed.data.session_id || null,
+    elapsed_ms: Date.now() - t0,
+    dealer: DEALER_NAME,
+    address: DEALER_ADDRESS
+  };
+  console.log(JSON.stringify({ event: 'book_service', call_id: parsed.data.call_id || null, success: result.success, status: result.status, live: LIVE_BOOKING_ENABLED, elapsed_ms: result.elapsed_ms, trace: booked.trace }));
   const response = { ...result, call_id: parsed.data.call_id || null, vehicle: { year: parsed.data.vehicle_year || null, model: parsed.data.vehicle_model, mileage: parsed.data.vehicle_mileage || null }, service_label: parsed.data.service_label || null, service_free_text: parsed.data.service_free_text || '', service_concern: parsed.data.service_concern, additional_services: parsed.data.additional_services || 'none', transport_option: parsed.data.transport_option || parsed.data.transportation_plan, transportation_plan: parsed.data.transportation_plan, customer_email: parsed.data.customer_email || null, confirmation_method: parsed.data.confirmation_method || null, sms_consent: parsed.data.sms_consent ?? null, consent_recorded: parsed.data.consent_recorded ?? null, scheduler_url: SCHEDULER_URL };
   inMemoryRequests.set(key, response);
   res.status(200).json(response);
