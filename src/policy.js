@@ -16,7 +16,7 @@ export function policyDecision(input) {
   if (/\bglass\b|windshield/.test(text)) return {action:'handoff', target:'cartech', reason:'Glass work is referred to CarTech Auto Glass.'};
   if (/scratch|\bdent\b|minor body/.test(text)) return {action:'handoff', target:'same_day', reason:'Minor body work goes to Same Day Auto Scratch and Dent Repair.'};
   if (/collision|major body|body repair/.test(text)) return {action:'handoff', target:'body_shop', reason:'Major body repair goes to the approved body shop; its exact name and number need confirmation.'};
-  if (/tire (repair|patch|plug)|patch.*tire|plug.*tire/.test(text)) return {action:'decline', reason:'The dealership does not offer tire repair. Tire replacement is a separate request.'};
+  if (/tire[s]? (repair|patch|plug)|repair.*tire|patch.*tire|plug.*tire/.test(text)) return {action:'decline', reason:'The dealership does not offer tire repair. Tire replacement is a separate request.'};
   if (/emissions|state inspection|auto.?butler|paint sealant|ceramic coat/.test(text)) return {action:'decline', reason:'This service is not offered.'};
   if (/water leak/.test(text)) {
     if (input.bumper_warranty === 'unknown' || !input.bumper_warranty) return {action:'clarify', field:'bumper_warranty', reason:'Water leaks require bumper-to-bumper warranty coverage.'};
@@ -27,13 +27,14 @@ export function policyDecision(input) {
     if (input.parts_arrived !== 'yes') return {action:'handoff', target:'service', reason:'Service must verify the part arrived before scheduling.'};
   }
   if (/shuttle|uber|lyft/.test(transport)) return {action:'clarify', field:'transport_option', reason:'No shuttle. Rideshare is unconfirmed; offer waiting or drop-off when eligible.'};
-  const dropOnly = /detail|water leak|flat tire|tire pressure|\btpms\b|inoperable|safety/.test(text);
+  const dropOnly = /detail|water leak|\bflat\b|(?:tire|tyre|low).*pressure|\btpms\b|inoperable|safety/.test(text);
   if (dropOnly && transport !== 'dropoff') return {action:'clarify', field:'transport_option', reason:'This request requires drop-off; do not promise waiting or safe driving.'};
   if (/pickup|delivery/.test(transport)) {
     if (!/^(ford|lincoln)$/i.test(input.vehicle_make || '')) return {action:'clarify', field:'transport_option', reason:'Pickup and delivery is approved for Ford and Lincoln only.'};
     return {action:'handoff', target:'service', reason:'Pickup and delivery is offered weekdays 8–3 for safe, operable vehicles; the address flow still needs integration validation.'};
   }
-  const express = /oil|rotation|filter|wiper|bulb|battery|brake inspection/.test(text) && !/fluid|align|warranty|check engine|repair|diagnos/.test(text);
+  const diagnostic = /fluid|align|warranty|check engine|repair|diagnos|noise|squeak|grind|vibrat|knock|leak|transmission|overheat|stall|won.t start|no start|brake (?:job|replace|service)|replace.*brake/.test(text);
+  const express = /oil change|rotation|filter|wiper|bulb|battery|brake inspection|the works/.test(text) && !diagnostic;
   return {action:'schedule', advisor: /^lincoln$/i.test(input.vehicle_make || '') && !express ? 'Nick' : 'any', dropOnly, express};
 }
 

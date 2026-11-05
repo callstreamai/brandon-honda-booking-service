@@ -1,4 +1,6 @@
 import { chromium } from 'playwright-core';
+import {allowedTestCaller,bookingStore} from './bookingStore.js';
+import {bookVoiceTest} from './voiceBooking.js';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
 import {watchReadRequests} from './readiness.js';
 import {parseTimeLabel} from './slots.js';
@@ -7,7 +9,7 @@ import {isAuthorizedTestBooking,prepareTestReview,inspectTestBooking,commitTestB
 // Observed GuestXP controls, November 5, 2026. Never execute caller-provided selectors or URLs.
 const sessions = new Map();
 const active = new Set();
-const idleMs = 2 * 60 * 1000;
+const idleMs = 10 * 60 * 1000;
 const sessionLimit=Math.max(1,Math.min(10,Number(process.env.MAX_BROWSER_SESSIONS)||2));
 let pendingConnections=0;
 export function browserStats(){return {active_sessions:sessions.size,connecting:pendingConnections,session_limit:sessionLimit};}
@@ -47,6 +49,8 @@ async function newSession(input) {
   page.setDefaultTimeout(12000);
   const s={browser,context,page,waitForReads:watchReadRequests(page),touched:Date.now(),fingerprint:inputFingerprint(input),stage:'opening',slots:[],busy:true};
   try {
+    s.receipts=[];s.receiptReads=[];
+    page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({path:new URL(response.url()).pathname,status:response.status(),value});}catch{}})();s.receiptReads.push(task);});
     s.stage='scheduler_open';
     await page.goto(dealer.scheduler,{waitUntil:'domcontentloaded',timeout:30000});
     s.stage='guest_entry';await page.getByRole('button',exact('button to proceed as a new customer')).click();
@@ -155,7 +159,7 @@ export async function operate(operation,input) {
     return {success:true,status:'session_closed'};
   }
   const testOperation=['book','review','inspect'].includes(operation);
-  if(testOperation&&!isAuthorizedTestBooking(input))return fail('write_disabled','General booking is disabled. This operation requires the exact, unexpired, user-approved test fixture.');
+  if(testOperation&&!isAuthorizedTestBooking(input)&&!allowedTestCaller(input))return fail('write_disabled','General booking is disabled. This operation requires the exact, unexpired, user-approved test fixture.');
   const decision=policyDecision(input);
   if(decision.action!=='schedule') return fail('policy_'+decision.action,decision.reason,{policy:decision});
   let s=sessions.get(key);
@@ -163,9 +167,13 @@ export async function operate(operation,input) {
   active.add(key);
   try {
     if(testOperation){
+      if(operation==='book'&&allowedTestCaller(input)){
+        const prior=bookingStore().byCall(input.call_id);
+        if(prior||s&&s.fingerprint===inputFingerprint(input)&&!s.page.isClosed()){if(s){s.busy=true;s.touched=Date.now();}return await bookVoiceTest(s,input);}
+      }
       if(!s||s.fingerprint!==inputFingerprint(input)||s.page.isClosed())return fail('fresh_availability_required','The approved booking needs a matching active scheduler session.');
       s.busy=true;s.touched=Date.now();
-      if(operation==='inspect')return await inspectTestBooking(s,{screenshot:input.include_screenshot===true});
+      if(operation==='inspect'){const view=await inspectTestBooking(s,{screenshot:input.include_screenshot===true});if(input.include_receipts===true&&allowedTestCaller(input))view.response_receipts=s.receipts||[];return view;}
       if(operation==='book')return await commitTestBooking(s,input);
       return await prepareTestReview(s,input);
     }

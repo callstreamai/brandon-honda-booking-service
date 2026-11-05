@@ -45,7 +45,7 @@ export async function prepareTestReview(s,input){
     // Keep the test marker visible to dealership staff even if no comments field exists.
     await p.getByLabel('First Name',{exact:true}).fill(first+' RPA TEST');
     await p.getByLabel('Last Name',{exact:true}).fill(last);
-    await p.getByLabel('Email Address',{exact:true}).fill(input.customer_email);
+    if(input.customer_email&&input.customer_email!=='none')await p.getByLabel('Email Address',{exact:true}).fill(input.customer_email);
     await p.getByLabel('Primary Phone (Mobile)',{exact:true}).fill(digits(input.caller_phone));
     await s.waitForReads();
     s.contactSubmitted=true;
@@ -54,8 +54,8 @@ export async function prepareTestReview(s,input){
     s.stage='booking_review';
     await p.getByRole('heading',{name:'Reservation Summary',exact:true}).waitFor();
     const comments=p.getByRole('textbox');
-    if(await comments.count()===1)await comments.fill('RPA TEST BOOKING: fictional Ford vehicle used for integration testing.');
-    const both=p.getByRole('radio',{name:'Both',exact:true});
+    if(await comments.count()===1)await comments.fill(('RPA TEST BOOKING: fictional Ford vehicle. '+(input.booking_notes||'')).slice(0,250));
+    const both=p.getByRole('radio',{name:input.confirmation_method||'Both',exact:true});
     if(await both.count()===1){if(!await both.isChecked())await both.locator('xpath=ancestor::label[1]').click();if(!await both.isChecked())throw new Error('Communication preference not applied');}
     else throw new Error('Communication preference needs mapping');
     const snapshot=await inspectTestBooking(s);
