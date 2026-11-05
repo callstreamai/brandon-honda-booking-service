@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {matchNamedServices} from '../src/serviceMatch.js';
+const menu=['Battery','Oil Change','Tire Rotation','The Works®','Wheel Alignment'];
+test('background menu load can resolve exact named work without another model request',()=>{assert.deepEqual(matchNamedServices('battery replacement',menu),['Battery']);assert.deepEqual(matchNamedServices('just an oil change and tire rotation, nothing else',menu),['Oil Change','Tire Rotation']);});
+test('extra diagnosis or unsupported work is not silently discarded',()=>{for(const text of ['battery replacement and engine noise','oil leak','battery replacement and detail'])assert.deepEqual(matchNamedServices(text,menu),[]);assert.deepEqual(matchNamedServices('battery replacement',['Oil Change']),[]);});

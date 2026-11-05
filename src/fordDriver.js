@@ -1,4 +1,5 @@
 import { chromium } from 'playwright-core';
+import {matchNamedServices} from './serviceMatch.js';
 import {allowedTestCaller,bookingStore} from './bookingStore.js';
 import {bookVoiceTest} from './voiceBooking.js';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
@@ -91,7 +92,8 @@ async function atCalendar(s,input,decision) {
   s.stage='select_services';
   let labels=input.service_labels;
   if(typeof labels==='string') {try{labels=JSON.parse(labels);}catch{labels=labels.split('|').map(x=>x.trim());}}
-  if(!Array.isArray(labels)||!labels.length) return fail('service_choice_required','Choose services from the returned menu.',{service_menu:s.menu});
+  if(!Array.isArray(labels)||!labels.length||labels.length===1&&['none',''].includes(labels[0]))labels=matchNamedServices(input.service_concern,s.menu);
+  if(!labels.length) return fail('service_choice_required','Choose services from the returned menu.',{service_menu:s.menu});
   if(labels.includes('The Works®'))labels=labels.filter(x=>!['Oil Change','Tire Rotation'].includes(x));
   for(const label of labels){
     if(!s.menu.includes(label)) return fail('service_choice_required','Requested service is not in this vehicle’s menu.',{service_menu:s.menu});
@@ -192,7 +194,7 @@ export async function operate(operation,input) {
     if(!s){s=await newSession(input);if(s.success===false)return s;sessions.set(key,s);}
     s.busy=true;s.touched=Date.now();
     if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu};
-    if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){sessions.delete(key);await close(s);return result;}}
+    if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(result.status==='service_choice_required'){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
     const date=input.preferred_date;
     const result=await selectDate(s.page,date,s.waitForReads);if(result)return result;
