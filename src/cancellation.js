@@ -46,9 +46,12 @@ export async function cancelOperation(operation,input){
   if(!ford){const d=new Date(r.input.preferred_date+'T12:00:00Z');const date=d.toLocaleDateString('en-US',{month:'long',day:'2-digit',year:'numeric',timeZone:'UTC'}).toLowerCase();if(!body.includes(date))return {success:false,status:'cancel_identity_unverified'};}
   const first=p.getByRole('button',{name:ford?'Cancel Reservation':'Cancel Appointment',exact:true});if(await first.count()!==1)return {success:false,status:'cancel_control_unverified'};
   await first.click();await s.wait();
-  await p.getByText(ford?'Are you sure you’d like to cancel your reservation? This cannot be undone.':'Are you sure you want to cancel your appointment?',{exact:true}).waitFor({state:'visible',timeout:12000});
+  s.stage='cancel_dialog_wait';
+  await p.getByRole('heading',{name:ford?'Cancel Reservation':'Cancel Appointment',exact:true}).waitFor({state:'visible',timeout:12000});
+  const dialogText=await p.locator('body').innerText();
+  if(!dialogText.includes(ford?'Are you sure you’d like to cancel your reservation?':'Are you sure you want to cancel your appointment?'))return {success:false,status:'cancel_review_unverified'};
   s.reyModal=!ford;s.finalButton=ford?'confirm cancel reservation':'Cancel Appointment';s.stage='cancel_review';
   return {success:true,status:'cancel_ready',appointment:publicRecord(r)};
- }catch{return {success:false,status:r.cancel_status==='unknown'?'cancellation_outcome_unknown':'cancel_review_error'};}
+ }catch(e){return {success:false,status:r.cancel_status==='unknown'?'cancellation_outcome_unknown':'cancel_review_error',failure_stage:s.stage,error_kind:e.name,error_detail:String(e.message||'').split('\n')[0].replace(/https?:\/\/\S+/g,'[URL]').slice(0,220)};}
  finally{s.busy=false;}
 }

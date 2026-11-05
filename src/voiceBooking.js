@@ -1,9 +1,22 @@
 import {inputFingerprint} from './policy.js';
-import {allowedTestCaller,bookingStore,publicRecord} from './bookingStore.js';
+import {allowedTestCaller,bookingStore,publicRecord,phoneDigits} from './bookingStore.js';
 import {prepareTestReview,commitTestBooking,inspectTestBooking} from './testBooking.js';
 export function confirmationFromScreen(snapshot){
  const m=String(snapshot.screen_text||'').match(/Your reservation number is:\s*(\d{6,20})\b/i);
  return snapshot.headings?.some(x=>x.trim()==='Thank You!')&&m?m[1]:null;
+}
+export function reviewMatches(input,selectedServices,screen){
+ const plain=String(screen||'').replace(/\s+/g,' ').toLowerCase();
+ const date=new Date(input.preferred_date+'T12:00:00Z');if(Number.isNaN(date.getTime()))return false;
+ const displayDate=date.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric',timeZone:'UTC'}).toLowerCase();
+ if(!plain.includes(displayDate)||!plain.includes(String(input.preferred_time).toLowerCase()))return false;
+ if(!plain.includes(String(input.vehicle_year))||!plain.includes(String(input.vehicle_make).toLowerCase())||!plain.includes(String(input.vehicle_model).toLowerCase())||!plain.includes('pierre ford of lynnwood'))return false;
+ if(!selectedServices?.length||!selectedServices.every(x=>plain.includes(x.toLowerCase())))return false;
+ if(!plain.replace(/\D/g,'').includes(phoneDigits(input.caller_phone)))return false;
+ if(input.customer_email&&input.customer_email!=='none'&&!plain.includes(input.customer_email.toLowerCase()))return false;
+ if(input.transport_option==='dropoff'&&!plain.includes("i'll drop the vehicle off"))return false;
+ if(input.transport_option==='wait'&&!/i'll wait|i will wait|waiting/.test(plain))return false;
+ return true;
 }
 export async function bookVoiceTest(s,input){
  if(!allowedTestCaller(input))return {success:false,status:'write_disabled'};
@@ -23,8 +36,7 @@ export async function bookVoiceTest(s,input){
  const review=await prepareTestReview(s,input);
  if(review.status!=='booking_review_ready')return {success:false,status:review.booking_status==='unknown'?'booking_outcome_unknown':'review_incomplete'};
  // The matching calendar session, exact slot selection and visible summary all precede the durable write guard.
- const plain=review.screen_text.replace(/\s+/g,' ').toLowerCase();
- if(!plain.includes(String(input.vehicle_year))||!plain.includes(String(input.vehicle_model).toLowerCase())||!plain.includes('pierre ford of lynnwood'))return {success:false,status:'review_mismatch'};
+ if(!reviewMatches(input,s.selectedServices,review.screen_text))return {success:false,status:'review_mismatch'};
  record=store.reserve(input); // fsync before final Schedule, even if the browser/network subsequently fails.
  const result=await commitTestBooking(s,{...input,review_token:review.review_token});
  const appointmentId=confirmationFromScreen(result);
