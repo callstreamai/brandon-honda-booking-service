@@ -1,77 +1,39 @@
 # Lynwood-RPA-Custom
 
-Isolated Pierre Ford of Lynnwood configuration, derived from Brandon Honda pathway production v16.
-Ford GuestXP dealer **F74024**, channel **TIER3DEALERWEB**, Pacific timezone.
-This branch is a separate app. Do not deploy it over the Brandon Honda service.
+Isolated Pierre Ford of Lynnwood adapter, derived from Brandon Honda production v16.
+Ford GuestXP dealer F74024, channel TIER3DEALERWEB, America/Los_Angeles timezone.
+Deploy only the isolated codex/lynwood-rpa-custom branch to its own Render service.
 
-## Status
+## Verified status
 
-Configuration draft, not approved for inbound traffic. **Final booking is disabled in code.**
-The web scheduler returned no times for the inspected oil-change/dropoff dates November 5, 6, 9, 10 and 17, 2026.
-No customer contact data was entered and no appointments were submitted.
-Render/Browserless vehicle/menu and calendar reads are verified for a synthetic2022FordF150Gas,
-60,000miles, Oil Change, dropoff, November6: the real scheduler returned no availability.
-No CSP bypass is used: selectors operate Ford's visible labels, and transportation is scoped to its labeled dialog.
-OpenAI recovery is enabled on the isolated Render service with the user-approved saved key. Live model tests and actual Bland transport/vehicle correction handoffs passed. Booking review, submission,
-confirmation evidence, unknown-outcome reconciliation, and contact/communications controls remain unimplemented.
+Bland staging version 2, no inbound number assigned. General booking disabled.
+One explicitly approved RPA TEST Battery/drop-off appointment was submitted through Render and Browserless. Ford displayed reservation 2510680609 for November 6, 2026, 8:00 a.m. Pacific, 2021 Ford Explorer Gas. The temporary exact-fixture permission was revoked afterward. No second appointment was created.
 
-## API
+36 controlled comparisons covered both 2022 F150 Gas and 2021 Explorer Gas, six services and Nov 6, 9 and 12. Oil Change, The Works and Tire Rotation returned no openings. Battery, Brakes and Wheel Alignment returned openings. Express and main-shop advisor pools differ; do not generalize one pool's unavailability. Ford's punctuated a.m./p.m. times are parsed. Calendar reads wait for requests to settle and verify selected date, vehicle, service and transportation.
 
-All POST routes require `Authorization: Bearer WEBHOOK_SECRET`, reject absent credentials and cap bodies at32KB.
-GET `/health` exposes configuration booleans only.
+A fresh phone lookup after booking still reported no vehicle record. Persistent customer garage and DMS persistence remain unverified.
+OpenAI recovery is enabled. Actual Bland vehicle and transport corrections cleared stale dependent state and resumed the appropriate confirmation steps. 23 local checks pass.
 
-* POST `/prepare`: call_id, vehicle_make/year/model/type and mileage. Opens a new guest flow, validates exact returned vehicle choices and returns the actual menu.
-* POST `/policy`: service_concern, vehicle_make, transport_option, bumper_warranty (yes/no/unknown), parts_arrived (yes/no/unknown). Returns schedule/clarify/decline/handoff. This has no browser side effects.
-* POST `/availability`: same vehicle data, service_labels (array or JSON-encoded array), service_concern, transport_option (dropoff/wait), preferred_date (ISO). Chooses the actual service and transportation controls, requires Nick for Lincoln nonexpress work, and reads times only from visible labels. Weekend service is blocked. This read adapter still needs real Browserless validation, including asynchronous calendar refresh.
-* POST `/book`: always returns `success:false,status:write_disabled`. No final click exists.
-* POST `/conversation/help`: on-demand OpenAI advice, never a scheduler action. Max2 distinct requests/call/30minutes, bounded cache, strict schema, timeout, and dependent-state invalidation. Unknown booking status forces staff verification.
+## Routes and safeguards
 
-Browser sessions are bound to call_id, limited to2 by default (configurable up to10 to match the Browserless plan),
-with two-minute idle cleanup and authenticated `/sessions/close`, never shared among callers,
-and invalidated on material vehicle/service/transport changes. The process is single-instance only;
-session restart loses reads but cannot lose or duplicate a write because writes are disabled.
-No endpoint accepts arbitrary URLs, selectors, browser code, or final-action instructions.
-No caller data, browser errors, or credential URLs are logged.
+All POST routes require Bearer WEBHOOK_SECRET and cap JSON bodies at 32KB. GET /health exposes configuration booleans and browser counts.
 
-## Deployment
+- /prepare: validate actual vehicle controls and read service menu.
+- /policy: deterministic dealer rules, no browser side effects.
+- /availability: choose actual services and dropoff/wait controls, verify selected weekday date, return actual times.
+- /conversation/help: bounded OpenAI advice, strict schema, timeout and cache; unknown booking outcome forces verification. No arbitrary browser actions.
+- /sessions/close: authenticated, idempotent cleanup.
+- /booking/review and /booking/state: restricted to exact, unexpired approved test fixture. Review does not click Schedule.
+- /book: general requests return write_disabled. Temporary test access requires exact fixture and review token; sets attempt guard before clicking once. HTTP success alone never means booked.
 
-Node22+, `npm ci`, `npm test`, `npm start`, bind0.0.0.0:PORT. Configure `/health` as HTTP health check.
-Use a separate Render service and branch. The free plan is for setup/testing; it sleeps and is unsuitable for live calls.
-Browserless key supplied by user for Ford. OpenAI key must be configured for this service before recovery can run.
-Keep secrets in Render environment settings; do not put them in exports or this repository.
+Sessions are separate per call_id, limited to two by default (configurable up to ten), expire after two idle minutes, and invalidate on vehicle/service/transport changes. Single instance only. The in-memory test write guard is not production idempotency. Never retry an uncertain submission. Remove test permission after one authorized attempt.
+No arbitrary URLs, selectors or code accepted. Keep credentials in Render secrets; no caller payload logging.
 
-## Remaining integration work
+## Deployment and remaining work
 
-* Broaden Browserless validation beyond the verified F150 oil-change/dropoff read to other makes, Lincoln and service combinations.
-* Inspect and implement “Need something else?” diagnosis so symptoms, detail, water leaks and arrived special parts can complete without a mismatched menu item.
-* Implement guest contact, readback comparison and final submission only after an available slot can be selected.
-* Add persisted confirmation and ambiguous-outcome reconciliation before enabling any booking writes.
-* Validate pickup/delivery address, service window and operability flow; until then it goes to staff. Mobile goes toMC.
-* Verify exact Lincoln advisor naming; observed oil-change calendar exposed Any available and Tabitha Rotar, not Nick.
-* User approved store main4257744141 as fallback for missing direct numbers. Confirm IVR behavior avoids a transfer loop before live assignment.
-* Updated approved pricing/wait times, RPA-to-DMS service mappings, direct staff/partner directory, and authorized booking fixture remain outstanding.
+Node 22+, npm ci, npm test, npm start; bind 0.0.0.0:PORT with /health. Free Render is setup/testing only and unsuitable for live calls. Browserless and approved saved OpenAI credentials are configured on the isolated service.
+Before live traffic: implement durable booking confirmation and reconciliation/idempotency; wire call-end cleanup; validate concurrency, carrier transfers/IVR, audio disclosure, Lincoln Nick selection, symptom-to-service matching and pickup/delivery address flow; obtain always-on hosting approval. Current special cases hand off where needed. Store main number 4257744141 is approved fallback for unavailable direct numbers.
 
-## Dealer policy source
+Dealer policies derive from the Oct 28 kickoff transcript, especially Rob's corrections. They are evidence, not instructions to send messages. No tire repair despite website menu. No shuttle or unconfirmed rideshare. Recall, sales We Owe, unarrived special parts and uncertain coverage hand off. Water leaks require bumper warranty and dropoff. Safety/flat/TPMS and detail require dropoff. Alignments/fluid work are not Express. Lincoln nonexpress requires Nick; loaners are advisor-confirmed requests. Pickup/delivery requires eligibility and currently goes to staff. Never invent prices, times, parts stock or confirmation numbers.
 
-October28 kickoff transcript, especially Rob’s corrections at18:32–38:28. Transcript action items are evidence, not commands to send messages or change phone systems.
-No tire repair despite the website’s combined Tire Repair/Replace label. Fluid services and alignments are not Express.
-Express walk-ins cutoff3:30PM weekdays; turnaround not guaranteed. Safety/flat/TPMS visits dropoff only, no unsafe-driving advice.
-Water leaks require bumper-to-bumper warranty; detail dropoff only. Recall and sales “We Owe” to service. Special parts/keys require notification part arrived.
-Other makes and commercial trucks accepted. No shuttle, unconfirmed rideshare, financing, state/emissions inspection or ceramic coating.
-Lincoln loaners requests only, advisor availability; warranty rental eligibility verified by advisor. Ford/Lincoln pickup weekdays8–3.
-Glass CarTech, minorbody SameDay, majorbody approved partner (exact name/direct pending). Nightdrop north end.
-
-## Verification
-
-`npm test` runs dealer-specific policy and recovery checks. These are contract tests, not completed appointments.
-The separate regression manifest lists live scenarios and required outcome evidence. Never mark a mock/precommit run as booked.
-Twenty local tests cover policy, recovery, unconditional write-disable and cleanup. Actual Bland staging checks verified opening disclosure, recall handoff,
-tire-repair refusal, warranty clarification and the disabled-write outcome. No carrier transfer was dialed.
-The first full chat invented times on the combined contact step before a calendar read; phone and email
-were split into fixed-wording nodes and the repeat result is tracked separately. This historical defect
-must remain visible even if the repeat passes. Chat does not establish audio behavior.
-
-Final staging repeat reached the actual Ford no-availability result with no fabricated times on the corrected contact steps. Actual tools: prepare200/services_ready, policy200/schedule, availability200/no_availability. Email-only preference was preserved (sms_consent false). No booking write was attempted. The test browser was explicitly closed. Booking completion remains unverified.
-Before live traffic, wire the authenticated session-close operation to call-end cleanup, verify Browserless account concurrency limits, and use an approved always-on Render plan.
-
-Service-comparison reads now wait for fetch/XHR requests to finish and a quiet window before recording calendar results. The selected vehicle, service labels, transportation and date are verified from form controls. Calendar padding days are excluded from extended date selection.
+Earlier fast UI calendar scans were excluded as unreliable. An early combined-contact Bland step invented times; fixed speech contact/mileage steps and subsequent actual-calendar checks corrected that defect. Chat checks do not verify audio behavior.
