@@ -46,7 +46,9 @@ export function createRecoveryServer({ env = process.env, decide = createRecover
       try {
         const result = await decide(input);
         const recovered_state = { ...(input.state || {}) };
-        for (const field of result.clear_fields || []) recovered_state[field] = null;
+        // Bland's response mapping can ignore JSON null. Use its existing "none" convention
+        // so stale values are overwritten, with typed values for arrays/consent gates.
+        for (const field of result.clear_fields || []) recovered_state[field] = field === 'available_slots' ? [] : field === 'readback_confirmed' ? false : 'none';
         const output = { ...result, recovered_state };
         episode.cache.set(digest, output);
         return send(200, output);

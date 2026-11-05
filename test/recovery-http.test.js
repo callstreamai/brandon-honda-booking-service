@@ -16,8 +16,8 @@ test('HTTP helper authenticates, clears stale fields, caches retries, caps calls
     assert.equal((await post('{bad')).status, 400);
     const first = await (await post(input)).json();
     assert.equal(first.recovered_state.vehicle_model, 'Civic');
-    assert.equal(first.recovered_state.preferred_time, null);
-    assert.equal(first.recovered_state.available_slots, null);
+    assert.equal(first.recovered_state.preferred_time, 'none');
+    assert.deepEqual(first.recovered_state.available_slots, []);
     assert.equal((await post(input)).status, 200);
     assert.equal(calls, 1);
     assert.equal((await post({ ...input, reason: 'second episode' })).status, 200);
