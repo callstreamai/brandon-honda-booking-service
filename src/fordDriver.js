@@ -84,10 +84,19 @@ async function atCalendar(s,input,decision) {
   let labels=input.service_labels;
   if(typeof labels==='string') {try{labels=JSON.parse(labels);}catch{labels=labels.split('|').map(x=>x.trim());}}
   if(!Array.isArray(labels)||!labels.length) return fail('service_choice_required','Choose services from the returned menu.',{service_menu:s.menu});
+  if(labels.includes('The Works®'))labels=labels.filter(x=>!['Oil Change','Tire Rotation'].includes(x));
   for(const label of labels){
     if(!s.menu.includes(label)) return fail('service_choice_required','Requested service is not in this vehicle’s menu.',{service_menu:s.menu});
     if(label==='Tire Repair/Replace' && !/tire.*replac|replac.*tire/i.test(input.service_concern||'')) return fail('policy_review_required','Tire repair is not offered. Confirm that replacement is the actual request.');
-    await selectLabeled(p.getByRole('checkbox',exact(label)));
+    const checkbox=p.getByRole('checkbox',exact(label));
+    if(!await checkbox.isChecked())await checkbox.locator('xpath=ancestor::label[1]').click();
+    await s.waitForReads();
+    const addService=p.getByRole('button',exact('Add Service'));
+    if(await addService.isVisible()){
+      if(await p.getByRole('heading',exact(label)).count()!==1||!await addService.isEnabled())return fail('service_details_required','This service needs additional choices before availability can be checked.');
+      await addService.click();await s.waitForReads();
+    }
+    if(!await checkbox.isChecked())return fail('service_not_selected','The requested service was not selected.');
   }
   s.selectedServices=[...labels];
   await p.getByRole('button',exact('Continue')).click();
