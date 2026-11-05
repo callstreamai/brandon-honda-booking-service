@@ -8,6 +8,10 @@ const idleMs = 12 * 60 * 1000;
 const exact = name => ({name, exact:true});
 const fail = (status,message,extra={}) => ({success:false,status,message,...extra});
 async function close(s) { await s?.browser?.close().catch(()=>{}); }
+async function selectLabeled(input) {
+  if(!await input.isChecked())await input.locator('xpath=ancestor::label[1]').click();
+  if(!await input.isChecked())throw new Error('Labeled selection was not applied');
+}
 setInterval(()=>{ for(const [key,s] of sessions) if(Date.now()-s.touched>idleMs && !s.busy){sessions.delete(key);void close(s);} },60000).unref();
 
 async function choose(select, value) {
@@ -48,7 +52,7 @@ async function newSession(input) {
     await mileage.fill(/^\d+$/.test(String(input.vehicle_mileage)) ? String(input.vehicle_mileage) : '');
     s.stage='load_services';await page.getByRole('button',exact('Continue')).click();
     await page.getByRole('heading',exact('Selected Services Will Be Added To Your Reservation')).waitFor();
-    await page.getByRole('checkbox').first().waitFor();
+    await page.getByRole('checkbox').first().waitFor({state:'attached'});
     s.menu=[];
     const boxes=page.getByRole('checkbox');
     for(let i=0;i<await boxes.count();i++)s.menu.push((await boxes.nth(i).locator('xpath=ancestor::label[1]').innerText()).trim());
@@ -58,7 +62,7 @@ async function newSession(input) {
     const message=String(cause?.message||'');
     e.detail=message.split('\n')[0].replace(/https?:\/\/\S+|wss?:\/\/\S+/g,'[URL]').split(process.env.BROWSERLESS_API_KEY||'__no_key__').join('[secret]').slice(0,240);
     e.kind=/strict mode violation/i.test(message)?'ambiguous_control':/closed|disconnect/i.test(message)?'browser_closed':cause?.name==='TimeoutError'?'control_timeout':'browser_action_error';
-    if(s.stage==='guest_entry')e.screen=await page.locator('h1,h2').allTextContents().catch(()=>[]);
+    e.screen=await page.locator('h1,h2').allTextContents().catch(()=>[]);
     await close(s);throw e;
   }
 }
@@ -71,15 +75,15 @@ async function atCalendar(s,input,decision) {
   for(const label of labels){
     if(!s.menu.includes(label)) return fail('service_choice_required','Requested service is not in this vehicle’s menu.',{service_menu:s.menu});
     if(label==='Tire Repair/Replace' && !/tire.*replac|replac.*tire/i.test(input.service_concern||'')) return fail('policy_review_required','Tire repair is not offered. Confirm that replacement is the actual request.');
-    await p.getByRole('checkbox',exact(label)).check();
+    await selectLabeled(p.getByRole('checkbox',exact(label)));
   }
   await p.getByRole('button',exact('Continue')).click();
   await p.getByRole('heading',exact('Select a Service Location')).waitFor();
-  await p.locator('[id="In-Person"]').check();
+  await selectLabeled(p.locator('[id="In-Person"]'));
   await p.getByRole('button',exact('Continue')).click();
   await p.getByRole('heading',exact('While Your Vehicle is Serviced')).waitFor();
   if(!['dropoff','wait'].includes(input.transport_option)) return fail('transport_required','Choose dropoff or wait.');
-  await p.locator(input.transport_option==='wait'?'[id="Waiter"]':'[id="Drop Off"]').check();
+  await selectLabeled(p.locator(input.transport_option==='wait'?'[id="Waiter"]':'[id="Drop Off"]'));
   await p.getByRole('button',exact('Continue')).click();
   await p.getByRole('heading',exact('Choose a Date and Time')).waitFor();
   const advisors=p.locator('#service-advisor');await advisors.waitFor();
@@ -96,7 +100,7 @@ async function atCalendar(s,input,decision) {
 async function selectDate(p,iso) {
   if(!isServiceDate(iso)) return fail('closed_date','Service is closed weekends; select a weekday.');
   const visible=p.locator(`[id="${iso}"]`);
-  if(await visible.count()) {await visible.check();return null;}
+  if(await visible.count()) {await selectLabeled(visible);return null;}
   await p.getByRole('button',exact('view more date options on calendar')).click();
   const [year,month,day]=iso.split('-').map(Number);
   const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
