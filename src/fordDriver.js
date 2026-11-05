@@ -84,10 +84,11 @@ async function atCalendar(s,input,decision) {
   await selectLabeled(p.locator('[id="In-Person"]'));
   await p.getByRole('button',exact('Continue')).click();
   s.stage='choose_transport';
-  await p.getByRole('heading',exact('While Your Vehicle is Serviced')).waitFor();
+  const transportForm=p.getByLabel('Choose a Transportation Option',{exact:true});
+  await transportForm.getByRole('heading',exact('While Your Vehicle is Serviced')).waitFor();
   if(!['dropoff','wait'].includes(input.transport_option)) return fail('transport_required','Choose dropoff or wait.');
-  await selectLabeled(p.locator(input.transport_option==='wait'?'[id="Waiter"]':'[id="Drop Off"]'));
-  await p.getByRole('button',exact('Continue')).click();
+  await selectLabeled(transportForm.locator(input.transport_option==='wait'?'[id="Waiter"]':'[id="Drop Off"]'));
+  await transportForm.getByRole('button',exact('Continue')).click();
   s.stage='open_calendar';
   await p.getByRole('heading',exact('Choose a Date and Time')).waitFor();
   const advisors=p.locator('#service-advisor');await advisors.waitFor();
