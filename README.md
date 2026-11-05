@@ -9,7 +9,10 @@ This branch is a separate app. Do not deploy it over the Brandon Honda service.
 Configuration draft, not approved for inbound traffic. **Final booking is disabled in code.**
 The web scheduler returned no times for the inspected oil-change/dropoff dates November 5, 6, 9, 10 and 17, 2026.
 No customer contact data was entered and no appointments were submitted.
-Availability adapter and recovery need deployed runtime verification. Booking review, submission,
+Render/Browserless vehicle/menu and calendar reads are verified for a synthetic2022FordF150Gas,
+60,000miles, Oil Change, dropoff, November6: the real scheduler returned no availability.
+No CSP bypass is used: selectors operate Ford's visible labels, and transportation is scoped to its labeled dialog.
+Recovery still needs its OpenAI credential and deployed model verification. Booking review, submission,
 confirmation evidence, unknown-outcome reconciliation, and contact/communications controls remain unimplemented.
 
 ## API
@@ -23,7 +26,8 @@ GET `/health` exposes configuration booleans only.
 * POST `/book`: always returns `success:false,status:write_disabled`. No final click exists.
 * POST `/conversation/help`: on-demand OpenAI advice, never a scheduler action. Max2 distinct requests/call/30minutes, bounded cache, strict schema, timeout, and dependent-state invalidation. Unknown booking status forces staff verification.
 
-Browser sessions are bound to call_id, limited to10 with idle cleanup, never shared among callers,
+Browser sessions are bound to call_id, limited to2 by default (configurable up to10 to match the Browserless plan),
+with two-minute idle cleanup and authenticated `/sessions/close`, never shared among callers,
 and invalidated on material vehicle/service/transport changes. The process is single-instance only;
 session restart loses reads but cannot lose or duplicate a write because writes are disabled.
 No endpoint accepts arbitrary URLs, selectors, browser code, or final-action instructions.
@@ -38,7 +42,7 @@ Keep secrets in Render environment settings; do not put them in exports or this 
 
 ## Remaining integration work
 
-* Validate Browserless against the observed guest path, all dynamic dropdown transitions, actual service menus and calendar refresh.
+* Broaden Browserless validation beyond the verified F150 oil-change/dropoff read to other makes, Lincoln and service combinations.
 * Inspect and implement “Need something else?” diagnosis so symptoms, detail, water leaks and arrived special parts can complete without a mismatched menu item.
 * Implement guest contact, readback comparison and final submission only after an available slot can be selected.
 * Add persisted confirmation and ambiguous-outcome reconciliation before enabling any booking writes.
@@ -61,3 +65,8 @@ Glass CarTech, minorbody SameDay, majorbody approved partner (exact name/direct 
 
 `npm test` runs dealer-specific policy and recovery checks. These are contract tests, not completed appointments.
 The separate regression manifest lists live scenarios and required outcome evidence. Never mark a mock/precommit run as booked.
+Eighteen local tests cover policy, recovery, unconditional write-disable and cleanup. Actual Bland staging checks verified opening disclosure, recall handoff,
+tire-repair refusal, warranty clarification and the disabled-write outcome. No carrier transfer was dialed.
+The first full chat invented times on the combined contact step before a calendar read; phone and email
+were split into fixed-wording nodes and the repeat result is tracked separately. This historical defect
+must remain visible even if the repeat passes. Chat does not establish audio behavior.

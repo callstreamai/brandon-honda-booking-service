@@ -4,7 +4,10 @@ import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.
 // Observed GuestXP controls, November 5, 2026. Never execute caller-provided selectors or URLs.
 const sessions = new Map();
 const active = new Set();
-const idleMs = 12 * 60 * 1000;
+const idleMs = 2 * 60 * 1000;
+const sessionLimit=Math.max(1,Math.min(10,Number(process.env.MAX_BROWSER_SESSIONS)||2));
+let pendingConnections=0;
+export function browserStats(){return {active_sessions:sessions.size,connecting:pendingConnections,session_limit:sessionLimit};}
 const exact = name => ({name, exact:true});
 const fail = (status,message,extra={}) => ({success:false,status,message,...extra});
 async function close(s) { await s?.browser?.close().catch(()=>{}); }
@@ -27,14 +30,18 @@ async function choose(select, value) {
 
 async function newSession(input) {
   if(!process.env.BROWSERLESS_API_KEY) return fail('browserless_not_configured','Browserless credential has not been configured.');
-  if(sessions.size>=10) return fail('capacity','All browser sessions are busy.');
+  if(sessions.size+pendingConnections>=sessionLimit) return fail('capacity','All configured browser sessions are busy.');
+  pendingConnections++;
+  try {
   const region=process.env.BROWSERLESS_REGION || 'production-sfo.browserless.io';
   if(!/^[a-z0-9.-]+\.browserless\.io$/.test(region)) throw new Error('Invalid Browserless region');
   let browser;
   try {browser=await chromium.connectOverCDP(`wss://${region}/chromium?token=${encodeURIComponent(process.env.BROWSERLESS_API_KEY)}&timeout=900000`);}
   catch {const e=new Error('Browserless connection failed');e.stage='browser_connection';throw e;}
-  const context=await browser.newContext({timezoneId:dealer.timezone});
-  const page=await context.newPage();page.setDefaultTimeout(12000);
+  let context,page;
+  try {context=await browser.newContext({timezoneId:dealer.timezone});page=await context.newPage();}
+  catch {await browser.close().catch(()=>{});throw new Error('Browser context could not be created');}
+  page.setDefaultTimeout(12000);
   const s={browser,context,page,touched:Date.now(),fingerprint:inputFingerprint(input),stage:'opening',slots:[],busy:true};
   try {
     s.stage='scheduler_open';
@@ -65,6 +72,7 @@ async function newSession(input) {
     e.screen=await page.locator('h1,h2').allTextContents().catch(()=>[]);
     await close(s);throw e;
   }
+  } finally {pendingConnections--;}
 }
 
 async function atCalendar(s,input,decision) {
@@ -122,6 +130,11 @@ async function selectDate(p,iso) {
 export async function operate(operation,input) {
   const key=String(input.call_id||'').trim();
   if(!key||key.includes('{{')) return fail('call_id_required','A unique call identifier is required.');
+  if(operation==='close'){
+    if(active.has(key))return fail('session_busy','A scheduler operation is running.');
+    const s=sessions.get(key);sessions.delete(key);await close(s);
+    return {success:true,status:'session_closed'};
+  }
   if(operation==='book') return fail('write_disabled','Final booking is disabled until the Ford review/confirmation screens and an authorized booking fixture are validated.');
   const decision=policyDecision(input);
   if(decision.action!=='schedule') return fail('policy_'+decision.action,decision.reason,{policy:decision});
