@@ -16,7 +16,7 @@ export function isAuthorizedTestBooking(input,env=process.env,now=Date.now()){
   if(!env.AUTHORIZED_TEST_SERVICE||clean(input.transport_option)!==clean(env.AUTHORIZED_TEST_TRANSPORT)||!env.AUTHORIZED_TEST_TRANSPORT)return false;
   return [true,'true'].includes(input.readback_confirmed)&&isServiceDate(input.preferred_date)&&!!parseTimeLabel(input.preferred_time);
 }
-const finalAction=/^(confirm|book|schedule|submit|complete)( your| my)? (appointment|reservation|service)( now)?$/i;
+const finalAction=/^(Schedule|(confirm|book|schedule|submit|complete)( your| my)? (appointment|reservation|service)( now)?)$/i;
 async function visibleButtons(page){
   const buttons=page.getByRole('button');const result=[];
   for(let i=0;i<await buttons.count();i++){const b=buttons.nth(i);if(!await b.isVisible())continue;const name=(await b.getAttribute('aria-label')||await b.innerText()).trim();if(name)result.push({name,enabled:await b.isEnabled()});}
@@ -52,6 +52,12 @@ export async function prepareTestReview(s,input){
     await p.getByRole('button',{name:'Continue',exact:true}).click();
     await s.waitForReads();
     s.stage='booking_review';
+    await p.getByRole('heading',{name:'Reservation Summary',exact:true}).waitFor();
+    const comments=p.getByRole('textbox');
+    if(await comments.count()===1)await comments.fill('RPA TEST BOOKING: fictional Ford vehicle used for integration testing.');
+    const both=p.getByRole('radio',{name:'Both',exact:true});
+    if(await both.count()===1){if(!await both.isChecked())await both.locator('xpath=ancestor::label[1]').click();if(!await both.isChecked())throw new Error('Communication preference not applied');}
+    else throw new Error('Communication preference needs mapping');
     const snapshot=await inspectTestBooking(s);
     const candidates=snapshot.buttons.filter(b=>b.enabled&&finalAction.test(b.name));
     if(candidates.length===1){s.finalButton=candidates[0].name;s.reviewToken=crypto.randomUUID();snapshot.review_token=s.reviewToken;snapshot.status='booking_review_ready';}

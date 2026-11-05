@@ -42,7 +42,7 @@ async function newSession(input) {
   try {browser=await chromium.connectOverCDP(`wss://${region}/chromium?token=${encodeURIComponent(process.env.BROWSERLESS_API_KEY)}&timeout=900000`);}
   catch {const e=new Error('Browserless connection failed');e.stage='browser_connection';throw e;}
   let context,page;
-  try {context=await browser.newContext({timezoneId:dealer.timezone});page=await context.newPage();}
+  try {context=await browser.newContext({timezoneId:dealer.timezone,viewport:{width:1440,height:1000}});page=await context.newPage();}
   catch {await browser.close().catch(()=>{});throw new Error('Browser context could not be created');}
   page.setDefaultTimeout(12000);
   const s={browser,context,page,waitForReads:watchReadRequests(page),touched:Date.now(),fingerprint:inputFingerprint(input),stage:'opening',slots:[],busy:true};
@@ -193,6 +193,7 @@ export async function operate(operation,input) {
     s.slots=[...new Set(slots)];s.date=date;
     return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true};
   } catch(e) {
+    if(testOperation&&s&&(s.writeAttempted||s.contactSubmitted)){s.bookingStatus='unknown';return fail('booking_outcome_unknown','Do not retry submission. Verify the existing scheduler session or contact service.',{booking_status:'unknown'});}
     if(s){sessions.delete(key);await close(s);}
     // Never return connection URLs, browser errors, page contents, or caller data to logs.
     const diagnostic=e.detail||String(e.message||'').split('\n')[0].replace(/https?:\/\/\S+|wss?:\/\/\S+/g,'[URL]').split(process.env.BROWSERLESS_API_KEY||'__no_key__').join('[secret]').slice(0,240);
