@@ -8,6 +8,8 @@ import {isAuthorizedTestBooking,prepareTestReview,inspectTestBooking,commitTestB
 
 // Observed GuestXP controls, November 5, 2026. Never execute caller-provided selectors or URLs.
 const sessions = new Map();
+const preparations=new Map();
+const vehicleFingerprint=input=>JSON.stringify(['vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage'].map(k=>input[k]??null));
 const active = new Set();
 const idleMs = 10 * 60 * 1000;
 const sessionLimit=Math.max(1,Math.min(10,Number(process.env.MAX_BROWSER_SESSIONS)||2));
@@ -20,7 +22,7 @@ async function selectLabeled(input) {
   if(!await input.isChecked())await input.locator('xpath=ancestor::label[1]').click();
   if(!await input.isChecked())throw new Error('Labeled selection was not applied');
 }
-setInterval(()=>{ for(const [key,s] of sessions) if(Date.now()-s.touched>idleMs && !s.busy){sessions.delete(key);void close(s);} },60000).unref();
+setInterval(()=>{for(const [key,p]of preparations)if(Date.now()-p.at>idleMs)preparations.delete(key); for(const [key,s] of sessions) if(Date.now()-s.touched>idleMs && !s.busy){sessions.delete(key);void close(s);} },60000).unref();
 
 async function choose(select, value) {
   const escaped=String(value).trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
@@ -47,7 +49,7 @@ async function newSession(input) {
   try {context=await browser.newContext({timezoneId:dealer.timezone,viewport:{width:1440,height:1000}});page=await context.newPage();}
   catch {await browser.close().catch(()=>{});throw new Error('Browser context could not be created');}
   page.setDefaultTimeout(12000);
-  const s={browser,context,page,waitForReads:watchReadRequests(page),touched:Date.now(),fingerprint:inputFingerprint(input),stage:'opening',slots:[],busy:true};
+  const s={browser,context,page,waitForReads:watchReadRequests(page),touched:Date.now(),fingerprint:inputFingerprint(input),vehicleFingerprint:vehicleFingerprint(input),stage:'opening',slots:[],busy:true};
   try {
     s.receipts=[];s.receiptReads=[];
     page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({path:new URL(response.url()).pathname,status:response.status(),value});}catch{}})();s.receiptReads.push(task);});
@@ -153,6 +155,14 @@ async function selectDate(p,iso,waitForReads) {
 export async function operate(operation,input) {
   const key=String(input.call_id||'').trim();
   if(!key||key.includes('{{')) return fail('call_id_required','A unique call identifier is required.');
+  if(operation==='prepare'&&input.background_prepare===true){
+    if(!preparations.has(key)&&!sessions.has(key)){
+      if(preparations.size>=20)return fail('capacity','All browser preparation slots are busy.');
+      const entry={at:Date.now(),promise:operate('prepare',{...input,background_prepare:false})};preparations.set(key,entry);
+    }
+    return {success:true,status:'preparing',service_menu:[]};
+  }
+  if(['availability','close'].includes(operation)&&preparations.has(key)){const entry=preparations.get(key);const result=await entry.promise;preparations.delete(key);if(operation!=='close'&&result.success===false)return result;}
   if(operation==='close'){
     if(active.has(key))return fail('session_busy','A scheduler operation is running.');
     const s=sessions.get(key);sessions.delete(key);await close(s);
@@ -177,6 +187,7 @@ export async function operate(operation,input) {
       if(operation==='book')return await commitTestBooking(s,input);
       return await prepareTestReview(s,input);
     }
+    if(s?.stage==='services'&&s.vehicleFingerprint===vehicleFingerprint(input))s.fingerprint=inputFingerprint(input);
     if(s&&(s.fingerprint!==inputFingerprint(input)||Date.now()-s.touched>idleMs||s.page.isClosed())) {sessions.delete(key);await close(s);s=null;}
     if(!s){s=await newSession(input);if(s.success===false)return s;sessions.set(key,s);}
     s.busy=true;s.touched=Date.now();
