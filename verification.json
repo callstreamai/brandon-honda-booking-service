@@ -1,0 +1,52 @@
+{
+  "pathway_id": "0dcd15c4-9251-4457-9e38-eaeb43f28f16",
+  "staging_version": 2,
+  "nodes": 33,
+  "edges": 41,
+  "render_service": "srv-dbmdpl49v7es73co64sg",
+  "live_commit": "93ee8674706a42b6381b1f0b323781a2bc86ec1c",
+  "unit_tests_passed": 18,
+  "actual_chat": {
+    "final_node": "no_availability",
+    "tool_results": [
+      {
+        "route": "prepare",
+        "http_status": 200,
+        "status": "services_ready",
+        "success": true,
+        "available_slots": null
+      },
+      {
+        "route": "policy",
+        "http_status": 200,
+        "status": null,
+        "success": true,
+        "available_slots": null
+      },
+      {
+        "route": "availability",
+        "http_status": 200,
+        "status": "no_availability",
+        "success": true,
+        "available_slots": []
+      }
+    ],
+    "booking_write_attempts": 0,
+    "sms_consent": false,
+    "confirmation_method": "Email"
+  },
+  "booking_completion": "unverified: no available slot; write endpoint disabled",
+  "recovery_model": "not configured: separate OpenAI key/reuse approval pending",
+  "live_phone_assignment": false,
+  "unverified": [
+    "final Ford contact/review/submission/confirmation",
+    "pickup/delivery address flow",
+    "Lincoln Nick selection",
+    "carrier transfer and IVR loop avoidance",
+    "voice disclosure behavior"
+  ],
+  "historical_findings": [
+    "First full chat invented times on combined contact step. Phone and email were split into fixed speech nodes; final repeat reached actual no-availability without fabricated times.",
+    "A repeat was unable to connect while prior read-test browser sessions remained. Cleanup endpoint, idle expiry and session limits were added."
+  ]
+}

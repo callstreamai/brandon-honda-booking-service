@@ -70,3 +70,6 @@ tire-repair refusal, warranty clarification and the disabled-write outcome. No c
 The first full chat invented times on the combined contact step before a calendar read; phone and email
 were split into fixed-wording nodes and the repeat result is tracked separately. This historical defect
 must remain visible even if the repeat passes. Chat does not establish audio behavior.
+
+Final staging repeat reached the actual Ford no-availability result with no fabricated times on the corrected contact steps. Actual tools: prepare200/services_ready, policy200/schedule, availability200/no_availability. Email-only preference was preserved (sms_consent false). No booking write was attempted. The test browser was explicitly closed. Booking completion remains unverified.
+Before live traffic, wire the authenticated session-close operation to call-end cleanup, verify Browserless account concurrency limits, and use an approved always-on Render plan.
