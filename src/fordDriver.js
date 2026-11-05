@@ -23,29 +23,33 @@ async function newSession(input) {
   if(sessions.size>=10) return fail('capacity','All browser sessions are busy.');
   const region=process.env.BROWSERLESS_REGION || 'production-sfo.browserless.io';
   if(!/^[a-z0-9.-]+\.browserless\.io$/.test(region)) throw new Error('Invalid Browserless region');
-  const browser=await chromium.connectOverCDP(`wss://${region}/chromium?token=${encodeURIComponent(process.env.BROWSERLESS_API_KEY)}&timeout=900000`);
+  let browser;
+  try {browser=await chromium.connectOverCDP(`wss://${region}/chromium?token=${encodeURIComponent(process.env.BROWSERLESS_API_KEY)}&timeout=900000`);}
+  catch {const e=new Error('Browserless connection failed');e.stage='browser_connection';throw e;}
   const context=await browser.newContext({timezoneId:dealer.timezone});
   const page=await context.newPage();page.setDefaultTimeout(12000);
   const s={browser,context,page,touched:Date.now(),fingerprint:inputFingerprint(input),stage:'opening',slots:[],busy:true};
   try {
+    s.stage='scheduler_open';
     await page.goto(dealer.scheduler,{waitUntil:'domcontentloaded',timeout:30000});
-    await page.getByRole('button',exact('button to proceed as a new customer')).click();
+    s.stage='guest_entry';await page.getByRole('button',exact('button to proceed as a new customer')).click();
     const make=page.getByLabel('Make',{exact:true});await make.waitFor({state:'visible'});
     await page.waitForFunction(()=>!document.querySelector('#make-input')?.disabled);
     for(const [field,label] of [['vehicle_make','Make'],['vehicle_year','Year'],['vehicle_model','Model'],['vehicle_type','Vehicle Type']]){
+      s.stage=field;
       if(!input[field]) {await close(s);return fail('vehicle_details_required',`Please provide ${label}.`,{missing_field:field});}
       const result=await choose(page.getByLabel(label,{exact:true}),input[field]);
       if(result){await close(s);return fail('vehicle_choice_required',`Select the scheduler's ${label}.`,{missing_field:field,choices:result.choices});}
     }
     // Ford supplies an estimated mileage. Do not present that estimate as the caller's mileage.
-    const mileage=page.locator('#mileage-input');
+    s.stage='vehicle_mileage';const mileage=page.locator('#mileage-input');
     await mileage.fill(/^\d+$/.test(String(input.vehicle_mileage)) ? String(input.vehicle_mileage) : '');
-    await page.getByRole('button',exact('Continue')).click();
+    s.stage='load_services';await page.getByRole('button',exact('Continue')).click();
     await page.getByRole('heading',exact('Selected Services Will Be Added To Your Reservation')).waitFor();
     await page.getByRole('checkbox').first().waitFor();
     s.menu=await page.getByRole('checkbox').evaluateAll(els=>els.map(el=>el.getAttribute('aria-label')||el.labels?.[0]?.textContent?.trim()||'').filter(Boolean));
     s.stage='services';return s;
-  } catch(e){await close(s);throw e;}
+  } catch{const e=new Error('Ford read failed');e.stage=s.stage;await close(s);throw e;}
 }
 
 async function atCalendar(s,input,decision) {
@@ -119,10 +123,10 @@ export async function operate(operation,input) {
     const slots=await s.page.getByRole('radio').evaluateAll(els=>els.map(el=>el.getAttribute('aria-label')||el.labels?.[0]?.innerText?.trim()||'').filter(x=>/\d{1,2}:\d{2}\s*[ap]m/i.test(x)));
     s.slots=[...new Set(slots)];s.date=date;
     return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false};
-  } catch {
+  } catch(e) {
     if(s){sessions.delete(key);await close(s);}
     // Never return connection URLs, browser errors, page contents, or caller data to logs.
-    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.');
+    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup'});
   } finally {if(s)s.busy=false;active.delete(key);}
 }
 
