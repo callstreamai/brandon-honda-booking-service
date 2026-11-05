@@ -22,7 +22,7 @@ export async function cancelOperation(operation,input){
   const p=s.page;await s.wait();
   if(operation==='commit'){
    if(s.stage!=='cancel_review'||![true,'true'].includes(input.cancel_confirmed))return {success:false,status:'cancel_confirmation_required'};
-   const scope=s.reyModal?p.getByRole('heading',{name:'Cancel Appointment',exact:true}).locator('xpath=ancestor::*[.//button[normalize-space(.)="Go Back"]][1]'):p;
+   const scope=s.reyModal?p.locator('[role="dialog"]').filter({hasText:'Are you sure you want to cancel your appointment?'}):p;
    const final=scope.getByRole('button',{name:s.finalButton,exact:true});if(await final.count()!==1||!await final.isEnabled())return {success:false,status:'cancel_review_changed'};
    store.update(r,{cancel_status:'unknown'});s.stage='cancel_result';
    try{await final.click();await s.wait();}catch{}
@@ -47,7 +47,8 @@ export async function cancelOperation(operation,input){
   const first=p.getByRole('button',{name:ford?'Cancel Reservation':'Cancel Appointment',exact:true});if(await first.count()!==1)return {success:false,status:'cancel_control_unverified'};
   await first.click();await s.wait();
   s.stage='cancel_dialog_wait';
-  await p.getByRole('heading',{name:ford?'Cancel Reservation':'Cancel Appointment',exact:true}).waitFor({state:'visible',timeout:12000});
+  const dialog=ford?p.getByRole('heading',{name:'Cancel Reservation',exact:true}):p.locator('[role="dialog"]').filter({hasText:'Are you sure you want to cancel your appointment?'});
+  await dialog.waitFor({state:'visible',timeout:12000});
   const dialogText=await p.locator('body').innerText();
   if(!dialogText.includes(ford?'Are you sure you’d like to cancel your reservation?':'Are you sure you want to cancel your appointment?'))return {success:false,status:'cancel_review_unverified'};
   s.reyModal=!ford;s.finalButton=ford?'confirm cancel reservation':'Cancel Appointment';s.stage='cancel_review';
