@@ -11,10 +11,13 @@ async function close(s) { await s?.browser?.close().catch(()=>{}); }
 setInterval(()=>{ for(const [key,s] of sessions) if(Date.now()-s.touched>idleMs && !s.busy){sessions.delete(key);void close(s);} },60000).unref();
 
 async function choose(select, value) {
-  const options = await select.locator('option').evaluateAll(els=>els.map(e=>({label:e.textContent.trim(),value:e.value})));
-  const match = options.filter(o=>o.label.toLowerCase()===String(value).trim().toLowerCase());
-  if(match.length!==1) return {status:'choice_required', choices:options.map(o=>o.label).filter(Boolean)};
-  await select.selectOption(match[0].value);
+  const escaped=String(value).trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const wanted=select.locator('option').filter({hasText:new RegExp('^'+escaped+'$','i')});
+  try {await wanted.first().waitFor({state:'attached',timeout:12000});}catch{}
+  const options=(await select.locator('option').allTextContents()).map(x=>x.trim());
+  const match=options.filter(x=>x.toLowerCase()===String(value).trim().toLowerCase());
+  if(match.length!==1) return {status:'choice_required',choices:options.filter(Boolean)};
+  await select.selectOption({label:match[0]});
   return null;
 }
 
@@ -34,7 +37,6 @@ async function newSession(input) {
     await page.goto(dealer.scheduler,{waitUntil:'domcontentloaded',timeout:30000});
     s.stage='guest_entry';await page.getByRole('button',exact('button to proceed as a new customer')).click();
     const make=page.getByLabel('Make',{exact:true});await make.waitFor({state:'visible'});
-    await page.waitForFunction(()=>!document.querySelector('#make-input')?.disabled);
     for(const [field,label] of [['vehicle_make','Make'],['vehicle_year','Year'],['vehicle_model','Model'],['vehicle_type','Vehicle Type']]){
       s.stage=field;
       if(!input[field]) {await close(s);return fail('vehicle_details_required',`Please provide ${label}.`,{missing_field:field});}
@@ -47,7 +49,9 @@ async function newSession(input) {
     s.stage='load_services';await page.getByRole('button',exact('Continue')).click();
     await page.getByRole('heading',exact('Selected Services Will Be Added To Your Reservation')).waitFor();
     await page.getByRole('checkbox').first().waitFor();
-    s.menu=await page.getByRole('checkbox').evaluateAll(els=>els.map(el=>el.getAttribute('aria-label')||el.labels?.[0]?.textContent?.trim()||'').filter(Boolean));
+    s.menu=[];
+    const boxes=page.getByRole('checkbox');
+    for(let i=0;i<await boxes.count();i++)s.menu.push((await boxes.nth(i).locator('xpath=ancestor::label[1]').innerText()).trim());
     s.stage='services';return s;
   } catch(cause){
     const e=new Error('Ford read failed');e.stage=s.stage;
@@ -80,11 +84,11 @@ async function atCalendar(s,input,decision) {
   await p.getByRole('heading',exact('Choose a Date and Time')).waitFor();
   const advisors=p.locator('#service-advisor');await advisors.waitFor();
   if(decision.advisor==='Nick') {
-    const options=await advisors.locator('option').evaluateAll(els=>els.map(e=>({label:e.textContent.trim(),value:e.value})));
+    const options=(await advisors.locator('option').allTextContents()).map(label=>({label:label.trim()}));
     // Never substitute the default advisor for Lincoln non-express work.
     const nick=options.filter(x=>/\bnick\b/i.test(x.label));
     if(nick.length!==1) return fail('advisor_unavailable','Nick is required for this Lincoln request but is not uniquely selectable.');
-    await advisors.selectOption(nick[0].value);
+    await advisors.selectOption({label:nick[0].label});
   }
   s.stage='calendar';return null;
 }
@@ -124,10 +128,15 @@ export async function operate(operation,input) {
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
     const date=input.preferred_date;
     const result=await selectDate(s.page,date);if(result)return result;
-    // Wait until the calendar settles. These time selectors are inspected as DOM-backed labels;
-    // no generated time can become an appointment option.
-    await s.page.waitForFunction(()=>document.body.innerText.includes('No service times available') || [...document.querySelectorAll('input[type="radio"]')].some(el=>/\d{1,2}:\d{2}\s*[ap]m/i.test(el.labels?.[0]?.innerText||el.getAttribute('aria-label')||'')),null,{timeout:15000});
-    const slots=await s.page.getByRole('radio').evaluateAll(els=>els.map(el=>el.getAttribute('aria-label')||el.labels?.[0]?.innerText?.trim()||'').filter(x=>/\d{1,2}:\d{2}\s*[ap]m/i.test(x)));
+    // Ford CSP forbids eval-based waits. Use native locator operations and network settling.
+    await s.page.waitForLoadState('networkidle',{timeout:15000});
+    const radios=s.page.getByRole('radio');const slots=[];
+    for(let i=0;i<await radios.count();i++){
+      const r=radios.nth(i);let label=await r.getAttribute('aria-label');
+      if(!label)label=await r.locator('xpath=ancestor::label[1]').innerText().catch(()=>'');
+      if(/\d{1,2}:\d{2}\s*[ap]m/i.test(label))slots.push(label.trim());
+    }
+    if(!slots.length && !await s.page.getByText('No service times available during the selected time period.',{exact:false}).count())return fail('calendar_unverified','The current calendar screen could not be verified.');
     s.slots=[...new Set(slots)];s.date=date;
     return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false};
   } catch(e) {
