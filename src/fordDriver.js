@@ -52,6 +52,7 @@ async function newSession(input) {
   } catch(cause){
     const e=new Error('Ford read failed');e.stage=s.stage;
     const message=String(cause?.message||'');
+    e.detail=message.split('\n')[0].replace(/https?:\/\/\S+|wss?:\/\/\S+/g,'[URL]').split(process.env.BROWSERLESS_API_KEY||'__no_key__').join('[secret]').slice(0,240);
     e.kind=/strict mode violation/i.test(message)?'ambiguous_control':/closed|disconnect/i.test(message)?'browser_closed':cause?.name==='TimeoutError'?'control_timeout':'browser_action_error';
     if(s.stage==='guest_entry')e.screen=await page.locator('h1,h2').allTextContents().catch(()=>[]);
     await close(s);throw e;
@@ -132,7 +133,7 @@ export async function operate(operation,input) {
   } catch(e) {
     if(s){sessions.delete(key);await close(s);}
     // Never return connection URLs, browser errors, page contents, or caller data to logs.
-    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup',failure_kind:e.kind||'connection_error',screen_headings:e.screen||[]});
+    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup',failure_kind:e.kind||'connection_error',screen_headings:e.screen||[],diagnostic_detail:e.detail||''});
   } finally {if(s)s.busy=false;active.delete(key);}
 }
 
