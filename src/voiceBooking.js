@@ -1,3 +1,4 @@
+import {inputFingerprint} from './policy.js';
 import {allowedTestCaller,bookingStore,publicRecord} from './bookingStore.js';
 import {prepareTestReview,commitTestBooking,inspectTestBooking} from './testBooking.js';
 export function confirmationFromScreen(snapshot){
@@ -12,6 +13,7 @@ export async function bookVoiceTest(s,input){
  if(['Email','Both'].includes(input.confirmation_method)&&!/^\S+@\S+\.\S+$/.test(input.customer_email||''))return {success:false,status:'email_required'};
  const store=bookingStore();let record=store.byCall(input.call_id);
  if(record){
+  if(inputFingerprint(record.input)!==inputFingerprint(input)||record.input.preferred_date!==input.preferred_date||record.input.preferred_time!==input.preferred_time)return {success:false,status:'existing_booking_changed_request',appointment:publicRecord(record),message:'The existing booking is not this corrected request. Do not create another; verify or cancel the existing record first.'};
   if(record.status==='confirmed')return {success:true,status:'booked',...publicRecord(record)};
   if(record.status==='unknown'&&s?.writeAttempted){const state=await inspectTestBooking(s);const id=confirmationFromScreen(state);if(id){store.update(record,{status:'confirmed',appointment_id:id});return {success:true,status:'booked',...publicRecord(record)};}}
   return {success:false,status:'booking_outcome_unknown',...publicRecord(record)};

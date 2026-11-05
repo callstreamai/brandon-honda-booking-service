@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {registerManagementLink,cancelOperation} from './cancellation.js';
 import {allowedTestCaller,bookingStore,publicRecord} from './bookingStore.js';
 import crypto from 'node:crypto';
 import {dealer,policyDecision} from './policy.js';
@@ -12,10 +13,13 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&req.url==='/health')return send(200,{status:'ok',dealer:dealer.name,dealer_code:dealer.code,browserless_configured:!!process.env.BROWSERLESS_API_KEY,booking_enabled:process.env.VOICE_TEST_BOOKING_ENABLED==='true',booking_scope:'approved_test_phone_only',durable_store_configured:!!process.env.BOOKING_STORE_PATH,recovery_configured:!!process.env.OPENAI_API_KEY&&process.env.EXTERNAL_RECOVERY_ENABLED==='true',...browserStats()});
   if(!authorized(req))return send(401,{success:false,status:'unauthorized'});
   const paths={'/prepare':'prepare','/availability':'availability','/book':'book','/sessions/close':'close','/booking/review':'review','/booking/state':'inspect'};
-  if(req.method!=='POST'||(!paths[req.url]&&!['/policy','/conversation/help','/appointments/lookup'].includes(req.url)))return send(404,{success:false,status:'not_found'});
+  if(req.method!=='POST'||(!paths[req.url]&&!['/policy','/conversation/help','/appointments/lookup','/appointments/link','/appointments/receipt','/cancel/review','/cancel','/cancel/state'].includes(req.url)))return send(404,{success:false,status:'not_found'});
   let raw='';try{
     for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>32768){send(413,{success:false,status:'too_large'});return;}}
     const input=scrub(JSON.parse(raw));if(!input||Array.isArray(input)||typeof input!=='object')return send(400,{success:false,status:'invalid_body'});
+    if(req.url==='/appointments/receipt'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const r=bookingStore().byId(input.appointment_id);return send(200,r&&r.phone===String(input.caller_phone).replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'')?{success:true,record:r}:{success:false,status:'appointment_not_found'});}
+    if(req.url==='/appointments/link')return send(200,registerManagementLink(input));
+    if(['/cancel/review','/cancel','/cancel/state'].includes(req.url))return send(200,await cancelOperation(req.url==='/cancel'?'commit':req.url==='/cancel/state'?'state':'review',input));
     if(req.url==='/appointments/lookup'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const rows=bookingStore().active(input.caller_phone);return send(200,{success:true,status:rows.length?'appointment_found':'no_appointment',appointments:rows.map(publicRecord)});}
     const result=req.url==='/policy'?{success:true,policy:policyDecision(input)}:req.url==='/conversation/help'?await recover(input):await operate(paths[req.url],input);
     send(200,result);
