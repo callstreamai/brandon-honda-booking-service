@@ -69,6 +69,7 @@ async function newSession(input) {
 
 async function atCalendar(s,input,decision) {
   const p=s.page;
+  s.stage='select_services';
   let labels=input.service_labels;
   if(typeof labels==='string') {try{labels=JSON.parse(labels);}catch{labels=labels.split('|').map(x=>x.trim());}}
   if(!Array.isArray(labels)||!labels.length) return fail('service_choice_required','Choose services from the returned menu.',{service_menu:s.menu});
@@ -78,13 +79,16 @@ async function atCalendar(s,input,decision) {
     await selectLabeled(p.getByRole('checkbox',exact(label)));
   }
   await p.getByRole('button',exact('Continue')).click();
+  s.stage='service_location';
   await p.getByRole('heading',exact('Select a Service Location')).waitFor();
   await selectLabeled(p.locator('[id="In-Person"]'));
   await p.getByRole('button',exact('Continue')).click();
+  s.stage='choose_transport';
   await p.getByRole('heading',exact('While Your Vehicle is Serviced')).waitFor();
   if(!['dropoff','wait'].includes(input.transport_option)) return fail('transport_required','Choose dropoff or wait.');
   await selectLabeled(p.locator(input.transport_option==='wait'?'[id="Waiter"]':'[id="Drop Off"]'));
   await p.getByRole('button',exact('Continue')).click();
+  s.stage='open_calendar';
   await p.getByRole('heading',exact('Choose a Date and Time')).waitFor();
   const advisors=p.locator('#service-advisor');await advisors.waitFor();
   if(decision.advisor==='Nick') {
@@ -146,7 +150,8 @@ export async function operate(operation,input) {
   } catch(e) {
     if(s){sessions.delete(key);await close(s);}
     // Never return connection URLs, browser errors, page contents, or caller data to logs.
-    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup',failure_kind:e.kind||'connection_error',screen_headings:e.screen||[],diagnostic_detail:e.detail||''});
+    const diagnostic=e.detail||String(e.message||'').split('\n')[0].replace(/https?:\/\/\S+|wss?:\/\/\S+/g,'[URL]').split(process.env.BROWSERLESS_API_KEY||'__no_key__').join('[secret]').slice(0,240);
+    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup',failure_kind:e.kind||e.name||'connection_error',screen_headings:e.screen||[],diagnostic_detail:diagnostic});
   } finally {if(s)s.busy=false;active.delete(key);}
 }
 
