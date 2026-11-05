@@ -19,7 +19,7 @@ export function receiptMatches(record,receipt){
  if(!plain.includes(String(i.vehicle_year))||!plain.replace(/[^a-z0-9]/g,'').includes(String(i.vehicle_model).toLowerCase().replace(/[^a-z0-9]/g,'')))return false;
  const [year,month,day]=i.preferred_date.split('-').map(Number);const dates=[`${month}/${day}/${year}`,`${String(month).padStart(2,'0')}/${String(day).padStart(2,'0')}/${String(year).slice(2)}`,`${String(month).padStart(2,'0')}/${String(day).padStart(2,'0')}/${year}`];
  if(!dates.some(d=>plain.includes(d)))return false;
- const compact=x=>String(x).toLowerCase().replace(/[\s.]/g,'');if(!compact(plain).includes(compact(i.preferred_time)))return false;
+ const compact=x=>String(x).toLowerCase().replace(/[\s.]/g,'');if(!compact(plain).includes(compact(i.preferred_time))&&!(receipt.cancelled&&record.status==='cancelled'))return false;
  return true;
 }
 export function ingestReceipt(email,store=bookingStore(),appointmentId=null){
