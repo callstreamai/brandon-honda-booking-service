@@ -49,7 +49,13 @@ async function newSession(input) {
     await page.getByRole('checkbox').first().waitFor();
     s.menu=await page.getByRole('checkbox').evaluateAll(els=>els.map(el=>el.getAttribute('aria-label')||el.labels?.[0]?.textContent?.trim()||'').filter(Boolean));
     s.stage='services';return s;
-  } catch{const e=new Error('Ford read failed');e.stage=s.stage;await close(s);throw e;}
+  } catch(cause){
+    const e=new Error('Ford read failed');e.stage=s.stage;
+    const message=String(cause?.message||'');
+    e.kind=/strict mode violation/i.test(message)?'ambiguous_control':/closed|disconnect/i.test(message)?'browser_closed':cause?.name==='TimeoutError'?'control_timeout':'browser_action_error';
+    if(s.stage==='guest_entry')e.screen=await page.locator('h1,h2').allTextContents().catch(()=>[]);
+    await close(s);throw e;
+  }
 }
 
 async function atCalendar(s,input,decision) {
@@ -126,7 +132,7 @@ export async function operate(operation,input) {
   } catch(e) {
     if(s){sessions.delete(key);await close(s);}
     // Never return connection URLs, browser errors, page contents, or caller data to logs.
-    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup'});
+    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup',failure_kind:e.kind||'connection_error',screen_headings:e.screen||[]});
   } finally {if(s)s.busy=false;active.delete(key);}
 }
 
