@@ -2,6 +2,20 @@
 
 Bland-compatible HTTPS API for Brandon Honda service scheduling.
 
+## Current runtime and recovery candidate
+
+The current server controls submission with `LIVE_BOOKING_ENABLED=true`, not the historical
+`BOOKING_MODE` / `ALLOW_LIVE_SUBMIT` examples below. The production health endpoint reported
+live submission enabled on November 5, 2026. Always check `/health` before testing; a pathway
+name containing "safe mode" is not evidence that submissions are disabled.
+
+See [the on-demand recovery pilot](docs/recovery-helper.md) for the new, independently disabled
+`/conversation/help` and `/conversation/decision` endpoints, staging configuration, limitations
+and the required Bland runtime checks. These endpoints cannot submit appointments.
+Run `npm test` for their local validation suite.
+
+The remaining original notes describe the initial deployment and are historical.
+
 ## Endpoints
 
 - `GET /health`

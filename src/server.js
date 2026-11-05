@@ -2,6 +2,8 @@ import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
+import { createDecisionService, decisionHandler } from './decisionService.js';
+import { createRecoveryService } from './recoveryService.js';
 import { startSession, stepSession, getSessionState, screenshotSession, closeSession, collectAvailability, advanceSession, bindSessionToCall, resolveSessionId, getSessionNetwork, fetchTextViaSession, acquireBoundSession, lookupCustomer, bookInSession } from './sessionDriver.js';
 
 const app = express();
@@ -644,6 +646,17 @@ app.delete('/sessions/:id', requireAuth, async (req, res) => {
     res.status(500).json({ ok: false, status: 'session_close_unhandled', error: err?.message || String(err) });
   }
 });
+
+// New opt-in decision pilot. No scheduler actions are reachable through this route.
+app.post('/conversation/decision', (req, res, next) => {
+  if (!WEBHOOK_SECRET) return res.status(503).json({ success: false, decision_status: 'auth_not_configured' });
+  return requireAuth(req, res, next);
+}, decisionHandler(createDecisionService()));
+
+app.post('/conversation/help', (req, res, next) => {
+  if (!WEBHOOK_SECRET) return res.status(503).json({ success: false, recovery_status: 'auth_not_configured' });
+  return requireAuth(req, res, next);
+}, decisionHandler(createRecoveryService()));
 
 app.post('/book-service', requireAuth, async (req, res) => {
   const parsed = bookingSchema.safeParse(req.body || {});
