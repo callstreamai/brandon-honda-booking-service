@@ -4,6 +4,7 @@ import {watchReadRequests} from './readiness.js';
 const sessions=new Map();
 export function validManagementUrl(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&((u.hostname==='www.guestxpui.ford.com'&&u.pathname==='/my-reservation'&&!!u.searchParams.get('enc'))||(u.hostname==='r7604913.m.reyrey.net'&&u.pathname==='/service-portal/'&&/^[a-f0-9]{32}$/i.test(u.searchParams.get('token')||'')));}catch{return false;}}
 export function registerManagementLink(input){if(!allowedTestCaller(input)||!validManagementUrl(input.management_url))return {success:false,status:'invalid_management_link'};const store=bookingStore(),r=store.byId(input.appointment_id);if(!r||r.phone!==phoneDigits(input.caller_phone))return {success:false,status:'appointment_not_found'};store.update(r,{management_url:input.management_url});return {success:true,status:'management_link_saved'};}
+export function cancellationConfirmed(view,id){return /Your reservation has been canceled\./i.test(view.screen_text||'')&&String(view.screen_text).includes(id)||/Your appointment has been cancelled\./i.test(view.screen_text||'')&&view.headings?.some(h=>h.trim()==='Thank You!');}
 async function snapshot(s,input){const result={success:false,status:s.stage,screen_text:(await s.page.locator('body').innerText()).slice(0,16000),headings:await s.page.locator('h1,h2,h3,h4').allTextContents()};if(input.include_screenshot)result.screenshot_base64=(await s.page.screenshot({fullPage:true})).toString('base64');return result;}
 setInterval(()=>{for(const[key,s]of sessions)if(!s.busy&&Date.now()-s.touched>600000){sessions.delete(key);void s.browser.close().catch(()=>{});}},60000).unref();
 export async function cancelOperation(operation,input){
@@ -26,8 +27,8 @@ export async function cancelOperation(operation,input){
    const final=scope.getByRole('button',{name:s.finalButton,exact:true});if(await final.count()!==1||!await final.isEnabled())return {success:false,status:'cancel_review_changed'};
    store.update(r,{cancel_status:'unknown'});s.stage='cancel_result';
    try{await final.click();await s.wait();}catch{}
-   const view=await snapshot(s,input);
-   if(/Your reservation has been canceled\./i.test(view.screen_text)&&view.screen_text.includes(r.appointment_id)){store.update(r,{status:'cancelled',cancel_status:'cancelled'});return {success:true,status:'cancelled',...publicRecord(r)};}
+   const view=await snapshot(s,input);store.update(r,{cancel_view:{screen_text:view.screen_text,headings:view.headings},cancel_call_id:input.call_id});
+   if(cancellationConfirmed(view,r.appointment_id)){store.update(r,{status:'cancelled',cancel_status:'cancelled'});return {success:true,status:'cancelled',...publicRecord(r)};}
    // Other success wording must be mapped from observed outcome, never guessed.
    return {...view,status:'cancellation_outcome_unknown'};
   }
