@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {policyDecision as decide,isServiceDate,inputFingerprint} from '../src/policy.js';
+test('recall overrides ordinary Lincoln scheduling',()=>assert.equal(decide({vehicle_make:'Lincoln',service_concern:'oil and recall'}).target,'service'));
+test('Lincoln maintenance uses express; nonexpress requires Nick',()=>{assert.equal(decide({vehicle_make:'Lincoln',service_concern:'oil change'}).advisor,'any');assert.equal(decide({vehicle_make:'Lincoln',service_concern:'check engine light'}).advisor,'Nick');assert.equal(decide({vehicle_make:'Lincoln',service_concern:'fluid service'}).advisor,'Nick');});
+test('other makes and commercial vehicles are accepted',()=>{assert.equal(decide({vehicle_make:'Toyota',service_concern:'oil change'}).action,'schedule');assert.equal(decide({vehicle_make:'Ford',vehicle_model:'F750',service_concern:'oil change'}).action,'schedule');});
+test('no tire repair despite combined website menu',()=>assert.equal(decide({service_concern:'tire repair'}).action,'decline'));
+test('detail and safety concerns require dropoff',()=>{assert.equal(decide({service_concern:'detail',transport_option:'wait'}).action,'clarify');assert.equal(decide({service_concern:'low tire pressure',transport_option:'dropoff'}).action,'schedule');});
+test('water leak requires coverage and dropoff',()=>{assert.equal(decide({service_concern:'water leak'}).field,'bumper_warranty');assert.equal(decide({service_concern:'water leak',bumper_warranty:'no'}).action,'decline');assert.equal(decide({service_concern:'water leak',bumper_warranty:'yes',transport_option:'dropoff'}).action,'schedule');});
+test('special parts not confirmed in stock go to service',()=>{assert.equal(decide({service_concern:'new key'}).field,'parts_arrived');assert.equal(decide({service_concern:'new key',parts_arrived:'no'}).target,'service');});
+test('mobile and glass have distinct partners',()=>{assert.equal(decide({service_concern:'mobile service'}).target,'mc');assert.equal(decide({service_concern:'windshield'}).target,'cartech');});
+test('no shuttle or unconfirmed rideshare',()=>{for(const transport_option of ['shuttle','uber','lyft'])assert.equal(decide({transport_option}).action,'clarify');});
+test('pickup is eligibility checked and not silently booked onsite',()=>{assert.equal(decide({vehicle_make:'Toyota',transport_option:'pickup'}).action,'clarify');assert.equal(decide({vehicle_make:'Ford',transport_option:'pickup'}).target,'service');});
+test('service closes weekends and rejects invalid dates',()=>{assert.equal(isServiceDate('2026-11-09'),true);for(const d of ['2026-11-07','2026-11-08','2026-02-30','soonest'])assert.equal(isServiceDate(d),false);});
+test('corrections invalidate vehicle/service/transport-dependent session',()=>{const a={vehicle_make:'Ford',vehicle_year:'2022',transport_option:'wait',service_labels:['Oil Change']};for(const change of [{vehicle_make:'Lincoln'},{vehicle_year:'2020'},{transport_option:'dropoff'},{service_labels:['Brakes']}])assert.notEqual(inputFingerprint(a),inputFingerprint({...a,...change}));});

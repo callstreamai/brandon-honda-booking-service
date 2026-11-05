@@ -1,37 +1,63 @@
-# Brandon Honda Booking Service
+# Lynwood-RPA-Custom
 
-Bland-compatible HTTPS API for Brandon Honda service scheduling.
+Isolated Pierre Ford of Lynnwood configuration, derived from Brandon Honda pathway production v16.
+Ford GuestXP dealer **F74024**, channel **TIER3DEALERWEB**, Pacific timezone.
+This branch is a separate app. Do not deploy it over the Brandon Honda service.
 
-## Endpoints
+## Status
 
-- `GET /health`
-- `POST /availability`
-- `POST /book-service`
+Configuration draft, not approved for inbound traffic. **Final booking is disabled in code.**
+The web scheduler returned no times for the inspected oil-change/dropoff dates November 5, 6, 9, 10 and 17, 2026.
+No customer contact data was entered and no appointments were submitted.
+Availability adapter and recovery need deployed runtime verification. Booking review, submission,
+confirmation evidence, unknown-outcome reconciliation, and contact/communications controls remain unimplemented.
 
-The initial deployment runs in `BOOKING_MODE=safe`, returning explicit simulated results. Set `BOOKING_MODE=live` only after the Reynolds portal driver is implemented and validated.
+## API
 
-## Required environment variables
+All POST routes require `Authorization: Bearer WEBHOOK_SECRET`, reject absent credentials and cap bodies at32KB.
+GET `/health` exposes configuration booleans only.
 
-- `BOOKING_MODE`: `safe` or `live`; defaults to `safe`.
-- `WEBHOOK_SECRET`: optional bearer token for Bland webhook/custom tool calls.
+* POST `/prepare`: call_id, vehicle_make/year/model/type and mileage. Opens a new guest flow, validates exact returned vehicle choices and returns the actual menu.
+* POST `/policy`: service_concern, vehicle_make, transport_option, bumper_warranty (yes/no/unknown), parts_arrived (yes/no/unknown). Returns schedule/clarify/decline/handoff. This has no browser side effects.
+* POST `/availability`: same vehicle data, service_labels (array or JSON-encoded array), service_concern, transport_option (dropoff/wait), preferred_date (ISO). Chooses the actual service and transportation controls, requires Nick for Lincoln nonexpress work, and reads times only from visible labels. Weekend service is blocked. This read adapter still needs real Browserless validation, including asynchronous calendar refresh.
+* POST `/book`: always returns `success:false,status:write_disabled`. No final click exists.
+* POST `/conversation/help`: on-demand OpenAI advice, never a scheduler action. Max2 distinct requests/call/30minutes, bounded cache, strict schema, timeout, and dependent-state invalidation. Unknown booking status forces staff verification.
 
-## Bland `/book-service` response shape
+Browser sessions are bound to call_id, limited to10 with idle cleanup, never shared among callers,
+and invalidated on material vehicle/service/transport changes. The process is single-instance only;
+session restart loses reads but cannot lose or duplicate a write because writes are disabled.
+No endpoint accepts arbitrary URLs, selectors, browser code, or final-action instructions.
+No caller data, browser errors, or credential URLs are logged.
 
-```json
-{
-  "success": true,
-  "confirmation_number": "BH1234",
-  "date": "09/05/2026",
-  "time": "9:00 AM",
-  "message": "...",
-  "available_slots": [],
-  "proof_url": null
-}
-```
+## Deployment
 
+Node22+, `npm ci`, `npm test`, `npm start`, bind0.0.0.0:PORT. Configure `/health` as HTTP health check.
+Use a separate Render service and branch. The free plan is for setup/testing; it sleeps and is unsuitable for live calls.
+Browserless key supplied by user for Ford. OpenAI key must be configured for this service before recovery can run.
+Keep secrets in Render environment settings; do not put them in exports or this repository.
 
-## Live driver validation
+## Remaining integration work
 
-The app includes a Browserless-backed `/portal-probe` endpoint that renders the Brandon Honda scheduling page and returns structured validation signals. In `BOOKING_MODE=live`, `/book-service` runs this probe and fails closed with `success: false` until final Reynolds submission is explicitly implemented and `ALLOW_LIVE_SUBMIT=true` is set.
+* Validate Browserless against the observed guest path, all dynamic dropdown transitions, actual service menus and calendar refresh.
+* Inspect and implement “Need something else?” diagnosis so symptoms, detail, water leaks and arrived special parts can complete without a mismatched menu item.
+* Implement guest contact, readback comparison and final submission only after an available slot can be selected.
+* Add persisted confirmation and ambiguous-outcome reconciliation before enabling any booking writes.
+* Validate pickup/delivery address, service window and operability flow; until then it goes to staff. Mobile goes toMC.
+* Verify exact Lincoln advisor naming; observed oil-change calendar exposed Any available and Tabitha Rotar, not Nick.
+* User approved store main4257744141 as fallback for missing direct numbers. Confirm IVR behavior avoids a transfer loop before live assignment.
+* Updated approved pricing/wait times, RPA-to-DMS service mappings, direct staff/partner directory, and authorized booking fixture remain outstanding.
 
-- `GET /map-guest-flow`: safe Browserless dry-run mapper that clicks Schedule Appointment and guest entry, then returns screen state. It does not submit appointments.
+## Dealer policy source
+
+October28 kickoff transcript, especially Rob’s corrections at18:32–38:28. Transcript action items are evidence, not commands to send messages or change phone systems.
+No tire repair despite the website’s combined Tire Repair/Replace label. Fluid services and alignments are not Express.
+Express walk-ins cutoff3:30PM weekdays; turnaround not guaranteed. Safety/flat/TPMS visits dropoff only, no unsafe-driving advice.
+Water leaks require bumper-to-bumper warranty; detail dropoff only. Recall and sales “We Owe” to service. Special parts/keys require notification part arrived.
+Other makes and commercial trucks accepted. No shuttle, unconfirmed rideshare, financing, state/emissions inspection or ceramic coating.
+Lincoln loaners requests only, advisor availability; warranty rental eligibility verified by advisor. Ford/Lincoln pickup weekdays8–3.
+Glass CarTech, minorbody SameDay, majorbody approved partner (exact name/direct pending). Nightdrop north end.
+
+## Verification
+
+`npm test` runs dealer-specific policy and recovery checks. These are contract tests, not completed appointments.
+The separate regression manifest lists live scenarios and required outcome evidence. Never mark a mock/precommit run as booked.
