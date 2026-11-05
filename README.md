@@ -12,7 +12,7 @@ No customer contact data was entered and no appointments were submitted.
 Render/Browserless vehicle/menu and calendar reads are verified for a synthetic2022FordF150Gas,
 60,000miles, Oil Change, dropoff, November6: the real scheduler returned no availability.
 No CSP bypass is used: selectors operate Ford's visible labels, and transportation is scoped to its labeled dialog.
-Recovery still needs its OpenAI credential and deployed model verification. Booking review, submission,
+OpenAI recovery is enabled on the isolated Render service with the user-approved saved key. Live model tests and actual Bland transport/vehicle correction handoffs passed. Booking review, submission,
 confirmation evidence, unknown-outcome reconciliation, and contact/communications controls remain unimplemented.
 
 ## API
@@ -65,7 +65,7 @@ Glass CarTech, minorbody SameDay, majorbody approved partner (exact name/direct 
 
 `npm test` runs dealer-specific policy and recovery checks. These are contract tests, not completed appointments.
 The separate regression manifest lists live scenarios and required outcome evidence. Never mark a mock/precommit run as booked.
-Eighteen local tests cover policy, recovery, unconditional write-disable and cleanup. Actual Bland staging checks verified opening disclosure, recall handoff,
+Twenty local tests cover policy, recovery, unconditional write-disable and cleanup. Actual Bland staging checks verified opening disclosure, recall handoff,
 tire-repair refusal, warranty clarification and the disabled-write outcome. No carrier transfer was dialed.
 The first full chat invented times on the combined contact step before a calendar read; phone and email
 were split into fixed-wording nodes and the repeat result is tracked separately. This historical defect
@@ -73,3 +73,5 @@ must remain visible even if the repeat passes. Chat does not establish audio beh
 
 Final staging repeat reached the actual Ford no-availability result with no fabricated times on the corrected contact steps. Actual tools: prepare200/services_ready, policy200/schedule, availability200/no_availability. Email-only preference was preserved (sms_consent false). No booking write was attempted. The test browser was explicitly closed. Booking completion remains unverified.
 Before live traffic, wire the authenticated session-close operation to call-end cleanup, verify Browserless account concurrency limits, and use an approved always-on Render plan.
+
+Service-comparison reads now wait for fetch/XHR requests to finish and a quiet window before recording calendar results. The selected vehicle, service labels, transportation and date are verified from form controls. Calendar padding days are excluded from extended date selection.

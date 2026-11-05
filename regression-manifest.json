@@ -1,30 +1,90 @@
 {
-  "dealer":"Pierre Ford of Lynnwood",
-  "pathway_name":"Lynwood-RPA-Custom",
-  "pathway_id":"0dcd15c4-9251-4457-9e38-eaeb43f28f16",
-  "source":"Brandon Honda production v16; dealer policies from October 28 kickoff",
-  "fixture_status":"No authorized booking fixture; final booking disabled",
-  "required_evidence":"Saved exact graph, actual Bland tool timeline, actual Browserless state. Booking scenarios additionally require persisted matching appointment and consent; policy-required transfers need acknowledged handoff. Voice/IVR require authorized voice test.",
-  "scenarios":[
-    {"name":"Ford routine oil change dropoff","expected":"Actual menu match, returned weekday slot, approved complete readback, persisted correct appointment; currently unverified"},
-    {"name":"Other make routine maintenance","expected":"No Ford-only rejection; validate actual vehicle/menu"},
-    {"name":"Commercial heavy-duty Ford","expected":"Accepted when selectable; no Honda year/model restrictions"},
-    {"name":"Lincoln express oil/rotation","expected":"Express eligible, no forced Nick if valid express advisor"},
-    {"name":"Lincoln nonexpress diagnostic","expected":"Nick must be uniquely selectable; never any-advisor substitution"},
-    {"name":"Recall including Lincoln","expected":"Known recall description retained; service handoff; no booking"},
-    {"name":"Tire repair vs replacement","expected":"Repair declined despite website label; replacement is separate explicit request"},
-    {"name":"Water leak coverage unknown/no/yes","expected":"Clarify unknown; decline no; covered requires dropoff and valid diagnosis path"},
-    {"name":"Detail or safety request waiting","expected":"Dropoff restriction, no turnaround promise or unsafe-driving suggestion"},
-    {"name":"New key special part","expected":"Arrival notification required; no notification goes to service"},
-    {"name":"Pickup delivery","expected":"Ford/Lincoln only, weekdays8–3, operability/fuel/address validation; currently staff"},
-    {"name":"Mobile glass body referrals","expected":"MC/CarTech/approved body partner; main-store fallback while directs missing"},
-    {"name":"Loaner shuttle rideshare rental","expected":"No shuttle/rideshare promise; Lincoln loaner availability caveat; rental advisor verifies"},
-    {"name":"No openings and weekday change","expected":"No fabricated times; continue actual calendar search; no false booking"},
-    {"name":"Vehicle or transport change during readback","expected":"Latest correction applied, dependent slots cleared and live recheck"},
-    {"name":"Repeated ignored input","expected":"On-demand helper bounded2 consultations, preserve known facts, progress or acknowledged handoff"},
-    {"name":"Unknown write outcome","expected":"Staff verification before retry; no denial or duplicate booking"},
-    {"name":"Disclosure objection/background speech","expected":"Full protected disclosure, collect nothing after objection; verify voice behavior"},
-    {"name":"Refused messages","expected":"No assumed consent; validate Ford form requirements or staff"},
-    {"name":"Main-store transfer IVR","expected":"Actual carrier transfer works and does not loop to this assistant"}
+  "dealer": "Pierre Ford of Lynnwood",
+  "pathway_name": "Lynwood-RPA-Custom",
+  "pathway_id": "0dcd15c4-9251-4457-9e38-eaeb43f28f16",
+  "source": "Brandon Honda production v16; dealer policies from October 28 kickoff",
+  "fixture_status": "User authorized two fictional Ford vehicles and one oil-change/dropoff test appointment at the earliest available weekday. Contact data is kept privately. Booking remains disabled pending real scheduler openings and final screens.",
+  "required_evidence": "Saved exact graph, actual Bland tool timeline, actual Browserless state. Booking scenarios additionally require persisted matching appointment and consent; policy-required transfers need acknowledged handoff. Voice/IVR require authorized voice test.",
+  "scenarios": [
+    {
+      "name": "Ford routine oil change dropoff",
+      "expected": "Actual menu match, returned weekday slot, approved complete readback, persisted correct appointment; currently unverified"
+    },
+    {
+      "name": "Other make routine maintenance",
+      "expected": "No Ford-only rejection; validate actual vehicle/menu"
+    },
+    {
+      "name": "Commercial heavy-duty Ford",
+      "expected": "Accepted when selectable; no Honda year/model restrictions"
+    },
+    {
+      "name": "Lincoln express oil/rotation",
+      "expected": "Express eligible, no forced Nick if valid express advisor"
+    },
+    {
+      "name": "Lincoln nonexpress diagnostic",
+      "expected": "Nick must be uniquely selectable; never any-advisor substitution"
+    },
+    {
+      "name": "Recall including Lincoln",
+      "expected": "Known recall description retained; service handoff; no booking"
+    },
+    {
+      "name": "Tire repair vs replacement",
+      "expected": "Repair declined despite website label; replacement is separate explicit request"
+    },
+    {
+      "name": "Water leak coverage unknown/no/yes",
+      "expected": "Clarify unknown; decline no; covered requires dropoff and valid diagnosis path"
+    },
+    {
+      "name": "Detail or safety request waiting",
+      "expected": "Dropoff restriction, no turnaround promise or unsafe-driving suggestion"
+    },
+    {
+      "name": "New key special part",
+      "expected": "Arrival notification required; no notification goes to service"
+    },
+    {
+      "name": "Pickup delivery",
+      "expected": "Ford/Lincoln only, weekdays8\u20133, operability/fuel/address validation; currently staff"
+    },
+    {
+      "name": "Mobile glass body referrals",
+      "expected": "MC/CarTech/approved body partner; main-store fallback while directs missing"
+    },
+    {
+      "name": "Loaner shuttle rideshare rental",
+      "expected": "No shuttle/rideshare promise; Lincoln loaner availability caveat; rental advisor verifies"
+    },
+    {
+      "name": "No openings and weekday change",
+      "expected": "No fabricated times; continue actual calendar search; no false booking"
+    },
+    {
+      "name": "Vehicle or transport change during readback",
+      "expected": "Latest correction applied, dependent slots cleared and live recheck"
+    },
+    {
+      "name": "Repeated ignored input",
+      "expected": "On-demand helper bounded2 consultations, preserve known facts, progress or acknowledged handoff"
+    },
+    {
+      "name": "Unknown write outcome",
+      "expected": "Staff verification before retry; no denial or duplicate booking"
+    },
+    {
+      "name": "Disclosure objection/background speech",
+      "expected": "Full protected disclosure, collect nothing after objection; verify voice behavior"
+    },
+    {
+      "name": "Refused messages",
+      "expected": "No assumed consent; validate Ford form requirements or staff"
+    },
+    {
+      "name": "Main-store transfer IVR",
+      "expected": "Actual carrier transfer works and does not loop to this assistant"
+    }
   ]
 }
