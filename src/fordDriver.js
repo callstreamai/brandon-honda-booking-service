@@ -1,6 +1,8 @@
 import { chromium } from 'playwright-core';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
 import {watchReadRequests} from './readiness.js';
+import {parseTimeLabel} from './slots.js';
+import {isAuthorizedTestBooking,prepareTestReview,inspectTestBooking,commitTestBooking} from './testBooking.js';
 
 // Observed GuestXP controls, November 5, 2026. Never execute caller-provided selectors or URLs.
 const sessions = new Map();
@@ -152,13 +154,21 @@ export async function operate(operation,input) {
     const s=sessions.get(key);sessions.delete(key);await close(s);
     return {success:true,status:'session_closed'};
   }
-  if(operation==='book') return fail('write_disabled','Final booking is disabled until the Ford review/confirmation screens and an authorized booking fixture are validated.');
+  const testOperation=['book','review','inspect'].includes(operation);
+  if(testOperation&&!isAuthorizedTestBooking(input))return fail('write_disabled','General booking is disabled. This operation requires the exact, unexpired, user-approved test fixture.');
   const decision=policyDecision(input);
   if(decision.action!=='schedule') return fail('policy_'+decision.action,decision.reason,{policy:decision});
   let s=sessions.get(key);
   if(active.has(key)||s?.busy) return fail('session_busy','This caller’s scheduler operation is already running.');
   active.add(key);
   try {
+    if(testOperation){
+      if(!s||s.fingerprint!==inputFingerprint(input)||s.page.isClosed())return fail('fresh_availability_required','The approved booking needs a matching active scheduler session.');
+      s.busy=true;s.touched=Date.now();
+      if(operation==='inspect')return await inspectTestBooking(s,{screenshot:input.include_screenshot===true});
+      if(operation==='book')return await commitTestBooking(s,input);
+      return await prepareTestReview(s,input);
+    }
     if(s&&(s.fingerprint!==inputFingerprint(input)||Date.now()-s.touched>idleMs||s.page.isClosed())) {sessions.delete(key);await close(s);s=null;}
     if(!s){s=await newSession(input);if(s.success===false)return s;sessions.set(key,s);}
     s.busy=true;s.touched=Date.now();
@@ -171,12 +181,13 @@ export async function operate(operation,input) {
     await s.waitForReads();
     const selectedDate=s.page.locator(`[id="${date}"]`);await selectedDate.waitFor({state:'attached'});
     if(!await selectedDate.isChecked())return fail('calendar_unverified','The requested date was not selected.');
-    const radios=s.page.getByRole('radio');const slots=[];
+    const radios=s.page.getByRole('radio');const slots=[];s.slotDetails=[];
     for(let i=0;i<await radios.count();i++){
       const r=radios.nth(i);let label=await r.getAttribute('aria-label');
       if(!await r.isEnabled())continue;
       if(!label)label=await r.locator('xpath=ancestor::label[1]').innerText().catch(()=>'');
-      if(/\d{1,2}:\d{2}\s*[ap]m/i.test(label))slots.push(label.trim());
+      const time=parseTimeLabel(label);
+      if(time){slots.push(time.text);s.slotDetails.push({...time,id:await r.getAttribute('id')});}
     }
     if(!slots.length && !await s.page.getByText('No service times available during the selected time period.',{exact:false}).count())return fail('calendar_unverified','The current calendar screen could not be verified.');
     s.slots=[...new Set(slots)];s.date=date;
