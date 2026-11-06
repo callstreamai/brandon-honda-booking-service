@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-core';
-import {matchNamedServices} from './serviceMatch.js';
+import {resolveServices} from './serviceRecovery.js';
 import {allowedTestCaller,bookingStore} from './bookingStore.js';
 import {bookVoiceTest} from './voiceBooking.js';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
@@ -91,10 +91,10 @@ async function newSession(input) {
 async function atCalendar(s,input,decision) {
   const p=s.page;
   s.stage='select_services';
-  let labels=input.service_labels;
-  if(typeof labels==='string') {try{labels=JSON.parse(labels);}catch{labels=labels.split('|').map(x=>x.trim());}}
-  if(!Array.isArray(labels)||!labels.length||labels.length===1&&['none',''].includes(labels[0]))labels=matchNamedServices(input.service_concern,s.menu);
-  if(!labels.length) return fail('service_choice_required','Choose services from the returned menu.',{service_menu:s.menu});
+  const resolution=await resolveServices(input,s.menu);
+  s.serviceResolution=resolution;
+  if(resolution.status!=='services_resolved')return fail(resolution.status,'Service matching needs a supported next step.',{...resolution,service_menu:s.menu,service_labels:'none',available_slots:[],preferred_time:'none',readback_confirmed:false});
+  let labels=resolution.service_labels;
   if(labels.includes('The Works®'))labels=labels.filter(x=>!['Oil Change','Tire Rotation'].includes(x));
   for(const label of labels){
     if(!s.menu.includes(label)) return fail('service_choice_required','Requested service is not in this vehicle’s menu.',{service_menu:s.menu});
@@ -109,6 +109,8 @@ async function atCalendar(s,input,decision) {
     }
     if(!await checkbox.isChecked())return fail('service_not_selected','The requested service was not selected.');
   }
+  input.service_labels=labels.join('|');
+  s.fingerprint=inputFingerprint(input);
   s.selectedServices=[...labels];
   await p.getByRole('button',exact('Continue')).click();
   s.stage='service_location';
@@ -195,7 +197,7 @@ export async function operate(operation,input) {
     if(!s){s=await newSession(input);if(s.success===false)return s;sessions.set(key,s);}
     s.busy=true;s.touched=Date.now();
     if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu};
-    if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(result.status==='service_choice_required'){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
+    if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(['service_choice_required','service_clarification_required','service_staff_required'].includes(result.status)){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
     const earliest=input.preferred_date==='earliest'||[true,'true'].includes(input.earliest_requested);
     let date=earliest?new Intl.DateTimeFormat('en-CA',{timeZone:dealer.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()):input.preferred_date;
@@ -222,7 +224,7 @@ export async function operate(operation,input) {
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
     // The resolved date becomes authoritative for readback and the final booking request.
     s.fingerprint=inputFingerprint({...input,preferred_date:date});
-    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true,searched_dates:searched};
+    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
     }
   } catch(e) {
     if(testOperation&&s&&(s.writeAttempted||s.contactSubmitted)){s.bookingStatus='unknown';return fail('booking_outcome_unknown','Do not retry submission. Verify the existing scheduler session or contact service.',{booking_status:'unknown'});}

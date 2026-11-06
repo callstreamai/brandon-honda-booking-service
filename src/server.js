@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {nextSchedulingStep} from './schedulingResume.js';
 import {lookupProfile} from './profileLookup.js';
 import {ingestReceipt} from './receiptIntake.js';
 import {registerManagementLink,cancelOperation,cancellationConfirmed} from './cancellation.js';
@@ -26,7 +27,8 @@ const server=http.createServer(async(req,res)=>{
     if(['/cancel/review','/cancel','/cancel/state'].includes(req.url))return send(200,await cancelOperation(req.url==='/cancel'?'commit':req.url==='/cancel/state'?'state':'review',input));
     if(req.url==='/appointments/lookup'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const rows=bookingStore().active(input.caller_phone);return send(200,{success:true,status:rows.length?'appointment_found':'no_appointment',appointments:rows.map(publicRecord)});}
     if(req.url==='/profile/lookup')return send(200,await lookupProfile(input));
-    const result=req.url==='/policy'?{success:true,policy:policyDecision(input)}:req.url==='/conversation/help'?await recover(input):await operate(paths[req.url],input);
+    if(req.url==='/policy'){const policy=policyDecision(input);return send(200,{success:true,policy,next_step:nextSchedulingStep(input,policy),available_slots:[],preferred_time:'none',readback_confirmed:false});}
+    const result=req.url==='/conversation/help'?await recover(input):await operate(paths[req.url],input);
     send(200,result);
   }catch{send(400,{success:false,status:'invalid_request'});}
 });
