@@ -10,7 +10,7 @@ export function reviewMatches(input,selectedServices,screen){
  const date=new Date(input.preferred_date+'T12:00:00Z');if(Number.isNaN(date.getTime()))return false;
  const displayDate=date.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric',timeZone:'UTC'}).toLowerCase();
  if(!plain.includes(displayDate)||!plain.includes(String(input.preferred_time).toLowerCase()))return false;
- if(!plain.includes(String(input.vehicle_year))||!plain.includes(String(input.vehicle_make).toLowerCase())||!plain.includes(String(input.vehicle_model).toLowerCase())||!plain.includes('pierre ford of lynnwood'))return false;
+ if(!plain.includes(String(input.vehicle_year))||!plain.includes(String(input.vehicle_make).toLowerCase())||!plain.replace(/[\s-]/g,'').includes(String(input.vehicle_model).toLowerCase().replace(/[\s-]/g,''))||!plain.includes('pierre ford of lynnwood'))return false;
  if(!selectedServices?.length||!selectedServices.every(x=>plain.includes(x.toLowerCase())))return false;
  if(!plain.replace(/\D/g,'').includes(phoneDigits(input.caller_phone)))return false;
  if(input.customer_email&&input.customer_email!=='none'&&!plain.includes(input.customer_email.toLowerCase()))return false;

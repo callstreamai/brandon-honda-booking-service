@@ -30,7 +30,8 @@ async function choose(select, value) {
   const wanted=select.locator('option').filter({hasText:new RegExp('^'+escaped+'$','i')});
   try {await wanted.first().waitFor({state:'attached',timeout:12000});}catch{}
   const options=(await select.locator('option').allTextContents()).map(x=>x.trim());
-  const match=options.filter(x=>x.toLowerCase()===String(value).trim().toLowerCase());
+  const normalized=x=>String(x).toLowerCase().replace(/[\s-]/g,'');
+  const match=options.filter(x=>normalized(x)===normalized(value));
   if(match.length!==1) return {status:'choice_required',choices:options.filter(Boolean)};
   await select.selectOption({label:match[0]});
   return null;
@@ -196,7 +197,13 @@ export async function operate(operation,input) {
     if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu};
     if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(result.status==='service_choice_required'){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
-    const date=input.preferred_date;
+    const earliest=input.preferred_date==='earliest';
+    let date=earliest?new Intl.DateTimeFormat('en-CA',{timeZone:dealer.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()):input.preferred_date;
+    const nextDay=d=>new Date(new Date(d+'T12:00:00Z').getTime()+86400000).toISOString().slice(0,10);
+    if(earliest)while(!isServiceDate(date))date=nextDay(date);
+    const searched=[];
+    for(let attempt=0;attempt<(earliest?5:1);attempt++){
+    searched.push(date);
     const result=await selectDate(s.page,date,s.waitForReads);if(result)return result;
     // Ford CSP forbids eval-based waits. Use native locator operations and network settling.
     await s.waitForReads();
@@ -212,7 +219,11 @@ export async function operate(operation,input) {
     }
     if(!slots.length && !await s.page.getByText('No service times available during the selected time period.',{exact:false}).count())return fail('calendar_unverified','The current calendar screen could not be verified.');
     s.slots=[...new Set(slots)];s.date=date;
-    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true};
+    if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
+    // The resolved date becomes authoritative for readback and the final booking request.
+    s.fingerprint=inputFingerprint({...input,preferred_date:date});
+    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true,searched_dates:searched};
+    }
   } catch(e) {
     if(testOperation&&s&&(s.writeAttempted||s.contactSubmitted)){s.bookingStatus='unknown';return fail('booking_outcome_unknown','Do not retry submission. Verify the existing scheduler session or contact service.',{booking_status:'unknown'});}
     if(s){sessions.delete(key);await close(s);}
