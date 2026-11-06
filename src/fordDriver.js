@@ -197,7 +197,7 @@ export async function operate(operation,input) {
     if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu};
     if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(result.status==='service_choice_required'){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
-    const earliest=input.preferred_date==='earliest';
+    const earliest=input.preferred_date==='earliest'||[true,'true'].includes(input.earliest_requested);
     let date=earliest?new Intl.DateTimeFormat('en-CA',{timeZone:dealer.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()):input.preferred_date;
     const nextDay=d=>new Date(new Date(d+'T12:00:00Z').getTime()+86400000).toISOString().slice(0,10);
     if(earliest)while(!isServiceDate(date))date=nextDay(date);
