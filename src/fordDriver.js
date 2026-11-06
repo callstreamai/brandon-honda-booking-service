@@ -26,7 +26,7 @@ async function selectLabeled(input) {
 setInterval(()=>{for(const [key,p]of preparations)if(Date.now()-p.at>idleMs)preparations.delete(key); for(const [key,s] of sessions) if(Date.now()-s.touched>idleMs && !s.busy){sessions.delete(key);void close(s);} },60000).unref();
 
 async function choose(select, value) {
-  const escaped=String(value).trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const escaped=String(value).trim().replace(/[\s-]/g,'').split('').map(c=>c.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('[\\s-]*');
   const wanted=select.locator('option').filter({hasText:new RegExp('^'+escaped+'$','i')});
   try {await wanted.first().waitFor({state:'attached',timeout:12000});}catch{}
   const options=(await select.locator('option').allTextContents()).map(x=>x.trim());
