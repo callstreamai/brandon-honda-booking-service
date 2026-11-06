@@ -5,7 +5,7 @@ const menu=['The Works®','Oil Change','Battery','Wheel Alignment'];
 const env={OPENAI_API_KEY:'synthetic',OPENAI_MODEL:'synthetic',EXTERNAL_RECOVERY_ENABLED:'true'};
 const response=result=>({ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(result)}]}]})});
 test('ordinary exact named maintenance bypasses external recovery',async()=>{
- const r=await resolveServices({call_id:'synthetic-service-local',service_concern:'battery replacement'},menu,env,async()=>{throw new Error('must not call model');});assert.equal(r.status,'services_resolved');assert.equal(r.service_recovery_used,false);
+ for(const service_concern of ['battery replacement','Oil service, The Works package']){const r=await resolveServices({call_id:'synthetic-service-local',service_concern},menu,env,async()=>{throw new Error('must not call model');});assert.equal(r.status,'services_resolved');assert.equal(r.service_recovery_used,false);}
 });
 test('an unresolved symptom invokes OpenAI with actual menu and no contact data, then cannot become an alignment',async()=>{
  let calls=0;const input={call_id:'synthetic-service-symptom',customer_name:'Private Name',customer_email:'private@example.com',caller_phone:'2025550101',service_concern:'Steering wheel shakes over 80 mph; oil change package',transport_option:'wait',earliest_requested:true};
