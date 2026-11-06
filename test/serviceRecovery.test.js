@@ -27,3 +27,8 @@ test('service recovery resumes at the first missing scheduling step rather than 
  const input={transport_option:'wait',earliest_requested:true,caller_phone:'2025550101',customer_email:'casey@example.com',confirmation_method:'Both'};
  assert.equal(nextSchedulingStep(input,{action:'schedule'}),'availability_check');assert.equal(nextSchedulingStep({...input,earliest_requested:false},{action:'schedule'}),'date_preference');assert.equal(nextSchedulingStep({...input,transport_option:null},{action:'schedule'}),'transport_option');assert.equal(nextSchedulingStep(input,{action:'clarify'}),null);assert.equal(nextSchedulingStep(input,{action:'handoff'}),null);
 });
+
+test('an inconclusive answer cannot cause a second clarification question',async()=>{
+ const input={call_id:'synthetic-service-one-question',service_concern:'oil package'};let count=0;const fetchImpl=async()=>{count++;return response({action:'clarify',labels:[],question:'Would you prefer a plain oil change or The Works package?',reason:'Preference unclear'});};
+ assert.equal((await resolveServices(input,menu,env,fetchImpl)).status,'service_clarification_required');assert.equal((await resolveServices({...input,service_recovery_answer:'I do not know.'},menu,env,fetchImpl)).status,'service_staff_required');assert.equal(count,2);
+});
