@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {accountTypeFor,selectAccountType} from './accountType.js';
 import {isServiceDate} from './policy.js';
 import {parseTimeLabel} from './slots.js';
 const clean=value=>String(value||'').trim().replace(/\s+/g,' ').toLowerCase();
@@ -43,8 +44,16 @@ export async function prepareTestReview(s,input){
     const words=String(input.customer_name).trim().split(/\s+/);const first=words.shift();const last=words.join(' ');
     // This endpoint is exclusively for the explicitly approved fictional test fixture.
     // Keep the test marker visible to dealership staff even if no comments field exists.
-    await p.getByLabel('First Name',{exact:true}).fill(first+' RPA TEST');
-    await p.getByLabel('Last Name',{exact:true}).fill(last);
+    const type=accountTypeFor(input);if(type!==s.accountType)return {success:false,status:'account_type_mismatch'};
+    await selectAccountType(p,type);
+    if(type==='business'){
+      if(!String(input.business_name||'').trim())return {success:false,status:'business_name_required'};
+      if(!/^\S+@\S+\.\S+$/.test(input.customer_email||''))return {success:false,status:'business_email_required'};
+      await p.getByLabel('Business Name',{exact:true}).fill(input.business_name+' RPA TEST');
+    }else{
+      await p.getByLabel('First Name',{exact:true}).fill(first+' RPA TEST');
+      await p.getByLabel('Last Name',{exact:true}).fill(last);
+    }
     if(input.customer_email&&input.customer_email!=='none')await p.getByLabel('Email Address',{exact:true}).fill(input.customer_email);
     await p.getByLabel('Primary Phone (Mobile)',{exact:true}).fill(digits(input.caller_phone));
     await s.waitForReads();
