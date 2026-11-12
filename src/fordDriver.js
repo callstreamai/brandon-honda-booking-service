@@ -1,4 +1,5 @@
 import { chromium } from 'playwright-core';
+import {accountTypeFor,selectAccountType} from './accountType.js';
 import {resolveServices} from './serviceRecovery.js';
 import {allowedTestCaller,bookingStore} from './bookingStore.js';
 import {bookVoiceTest} from './voiceBooking.js';
@@ -10,7 +11,7 @@ import {isAuthorizedTestBooking,prepareTestReview,inspectTestBooking,commitTestB
 // Observed GuestXP controls, November 5, 2026. Never execute caller-provided selectors or URLs.
 const sessions = new Map();
 const preparations=new Map();
-const vehicleFingerprint=input=>JSON.stringify(['vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage'].map(k=>input[k]??null));
+const vehicleFingerprint=input=>JSON.stringify(['customer_account_type','vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage'].map(k=>input[k]??null));
 const active = new Set();
 const idleMs = 10 * 60 * 1000;
 const sessionLimit=Math.max(1,Math.min(10,Number(process.env.MAX_BROWSER_SESSIONS)||2));
@@ -57,6 +58,7 @@ async function newSession(input) {
     page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({path:new URL(response.url()).pathname,status:response.status(),value});}catch{}})();s.receiptReads.push(task);});
     s.stage='scheduler_open';
     await page.goto(dealer.scheduler,{waitUntil:'domcontentloaded',timeout:30000});
+    s.stage='account_selection';s.accountType=await selectAccountType(page,input.customer_account_type);
     s.stage='guest_entry';await page.getByRole('button',exact('button to proceed as a new customer')).click();
     const make=page.getByLabel('Make',{exact:true});await make.waitFor({state:'visible'});
     for(const [field,label] of [['vehicle_make','Make'],['vehicle_year','Year'],['vehicle_model','Model'],['vehicle_type','Vehicle Type']]){
@@ -159,13 +161,14 @@ async function selectDate(p,iso,waitForReads) {
 
 export async function operate(operation,input) {
   const key=String(input.call_id||'').trim();
+  if(operation!=='close'){const type=accountTypeFor(input);if(!type)return fail('account_type_required','Confirm whether this is an individual or business/fleet reservation.');input={...input,customer_account_type:type};}
   if(!key||key.includes('{{')) return fail('call_id_required','A unique call identifier is required.');
   if(operation==='prepare'&&input.background_prepare===true){
     if(!preparations.has(key)&&!sessions.has(key)){
       if(preparations.size>=20)return fail('capacity','All browser preparation slots are busy.');
       const entry={at:Date.now(),promise:operate('prepare',{...input,background_prepare:false})};preparations.set(key,entry);
     }
-    return {success:true,status:'preparing',service_menu:[]};
+    return {success:true,status:'preparing',service_menu:[],next_step:input.service_concern?'policy_hook':'service_need'};
   }
   if(['availability','close'].includes(operation)&&preparations.has(key)){const entry=preparations.get(key);const result=await entry.promise;preparations.delete(key);if(operation!=='close'&&result.success===false)return result;}
   if(operation==='close'){
@@ -196,7 +199,7 @@ export async function operate(operation,input) {
     if(s&&(s.fingerprint!==inputFingerprint(input)||Date.now()-s.touched>idleMs||s.page.isClosed())) {sessions.delete(key);await close(s);s=null;}
     if(!s){s=await newSession(input);if(s.success===false)return s;sessions.set(key,s);}
     s.busy=true;s.touched=Date.now();
-    if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu};
+    if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu,verified_account_type:s.accountType,next_step:input.service_concern?'policy_hook':'service_need'};
     if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(['service_choice_required','service_clarification_required','service_staff_required'].includes(result.status)){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
     const earliest=input.preferred_date==='earliest'||[true,'true'].includes(input.earliest_requested);
@@ -224,14 +227,14 @@ export async function operate(operation,input) {
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
     // The resolved date becomes authoritative for readback and the final booking request.
     s.fingerprint=inputFingerprint({...input,preferred_date:date});
-    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
+    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
     }
   } catch(e) {
     if(testOperation&&s&&(s.writeAttempted||s.contactSubmitted)){s.bookingStatus='unknown';return fail('booking_outcome_unknown','Do not retry submission. Verify the existing scheduler session or contact service.',{booking_status:'unknown'});}
     if(s){sessions.delete(key);await close(s);}
     // Never return connection URLs, browser errors, page contents, or caller data to logs.
     const diagnostic=e.detail||String(e.message||'').split('\n')[0].replace(/https?:\/\/\S+|wss?:\/\/\S+/g,'[URL]').split(process.env.BROWSERLESS_API_KEY||'__no_key__').join('[secret]').slice(0,240);
-    return fail('scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup',failure_kind:e.kind||e.name||'connection_error',screen_headings:e.screen||[],diagnostic_detail:diagnostic});
+    return fail(e.stage==='account_selection'?'account_selection_failed':'scheduler_error','The Ford scheduler could not complete this read. No booking submission was attempted.',{failure_stage:e.stage||s?.stage||'browser_setup',failure_kind:e.kind||e.name||'connection_error',screen_headings:e.screen||[],diagnostic_detail:diagnostic});
   } finally {if(s)s.busy=false;active.delete(key);}
 }
 
