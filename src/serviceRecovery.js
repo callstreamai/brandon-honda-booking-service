@@ -24,7 +24,7 @@ export async function resolveServices(input,menu,env=process.env,fetchImpl=fetch
  const local=matchNamedServices(input.service_concern,menu);
  if(local.length)return {status:'services_resolved',service_labels:local,service_recovery_used:false,service_recovery_action:'local',service_recovery_question:null};
  if(!input.call_id||!Array.isArray(menu)||!menu.length||typeof input.service_concern!=='string'||input.service_concern.length>2000)return staff('The full service request and actual vehicle menu could not be verified.');
- const context={vehicle:{make:input.vehicle_make,year:input.vehicle_year,model:input.vehicle_model,type:input.vehicle_type},request:input.service_concern,clarification_answer:String(input.service_recovery_answer||'').slice(0,1000),actual_menu:menu};
+ const context={customer_account_type:input.customer_account_type,vehicle:{make:input.vehicle_make,year:input.vehicle_year,model:input.vehicle_model,type:input.vehicle_type},request:input.service_concern,clarification_answer:String(input.service_recovery_answer||'').slice(0,1000),actual_menu:menu};
  const now=Date.now();for(const[k,v]of calls)if(now-v.at>1800000)calls.delete(k);
  let entry=calls.get(input.call_id);if(!entry){if(calls.size>=500)return staff('Service recovery is unavailable.');entry={at:now,count:0,busy:false,cache:new Map()};calls.set(input.call_id,entry);}
  const hash=crypto.createHash('sha256').update(JSON.stringify(context)).digest('hex');
