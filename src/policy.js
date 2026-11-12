@@ -39,7 +39,7 @@ export function policyDecision(input) {
 }
 
 export function inputFingerprint(input) {
-  return JSON.stringify(['vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage','service_labels','service_concern','transport_option','bumper_warranty','parts_arrived'].map(k=>input[k] ?? null));
+  return JSON.stringify(['customer_account_type','business_name','vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage','service_labels','service_concern','transport_option','bumper_warranty','parts_arrived'].map(k=>input[k] ?? null));
 }
 
 export function isServiceDate(date) {
