@@ -1,3 +1,4 @@
+import {accountTypeFor} from './accountType.js';
 import {inputFingerprint} from './policy.js';
 import {allowedTestCaller,bookingStore,publicRecord,phoneDigits} from './bookingStore.js';
 import {prepareTestReview,commitTestBooking,inspectTestBooking} from './testBooking.js';
@@ -11,6 +12,7 @@ export function reviewMatches(input,selectedServices,screen){
  const displayDate=date.toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric',timeZone:'UTC'}).toLowerCase();
  if(!plain.includes(displayDate)||!plain.includes(String(input.preferred_time).toLowerCase()))return false;
  if(!plain.includes(String(input.vehicle_year))||!plain.includes(String(input.vehicle_make).toLowerCase())||!plain.replace(/[\s-]/g,'').includes(String(input.vehicle_model).toLowerCase().replace(/[\s-]/g,''))||!plain.includes('pierre ford of lynnwood'))return false;
+ if(accountTypeFor(input)==='business'&&(!String(input.business_name||'').trim()||!plain.includes(String(input.business_name).trim().replace(/\s+/g,' ').toLowerCase())))return false;
  if(!selectedServices?.length||!selectedServices.every(x=>plain.includes(x.toLowerCase())))return false;
  if(!plain.replace(/\D/g,'').includes(phoneDigits(input.caller_phone)))return false;
  if(input.customer_email&&input.customer_email!=='none'&&!plain.includes(input.customer_email.toLowerCase()))return false;
@@ -33,6 +35,8 @@ export async function bookVoiceTest(s,input){
  }
  const active=store.active(input.caller_phone);if(active.length)return {success:false,status:'active_test_booking',appointment:publicRecord(active[0]),message:'There is already an outstanding test reservation. Verify or cancel that record before creating another.'};
  if(!s)return {success:false,status:'fresh_availability_required'};
+ if(accountTypeFor(input)!==s.accountType)return {success:false,status:'account_type_mismatch'};
+ if(accountTypeFor(input)==='business'&&(!input.business_name||!/^\S+@\S+\.\S+$/.test(input.customer_email||'')))return {success:false,status:'business_details_required'};
  const review=await prepareTestReview(s,input);
  if(review.status!=='booking_review_ready')return {success:false,status:review.booking_status==='unknown'?'booking_outcome_unknown':'review_incomplete'};
  // The matching calendar session, exact slot selection and visible summary all precede the durable write guard.
