@@ -14,13 +14,15 @@ export function requestEmail(i,{to,from='Alpha Drive AI <appointments@alphalabs.
  return {from,to:[to],subject:`${test?'[TEST] ':''}${action} | Pierre Ford of Lynnwood | Alpha Drive AI`,html,text};
 }
 const inFlight=new Set();
+const ledgers=new Map();
 export async function sendChangeRequest(i,{env=process.env,fetcher=fetch}={}){
  const missing=missingRequest(i);if(missing)return {status:'details_required',missing_field:missing,request_sent:false};
  if(i.request_confirmed!==true&&i.request_confirmed!=='true')return {status:'confirmation_required',request_sent:false};
  const id=clean(i.call_id);if(!id)return {status:'call_id_required',request_sent:false};
  if(!env.RESEND_API_KEY||!env.DEALER_REQUEST_TO||!env.BOOKING_STORE_PATH)return {status:'email_not_configured',request_sent:false};
  const file=path.join(path.dirname(env.BOOKING_STORE_PATH),'change-requests.json');
- const data=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{};
+ if(!ledgers.has(file))ledgers.set(file,fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{});
+ const data=ledgers.get(file);
  const hash=crypto.createHash('sha256').update(JSON.stringify(requestDetails(i))).digest('hex');
  const key=crypto.createHash('sha256').update(id).digest('hex');const prior=data[key];
  if(prior?.hash!==hash&&prior)return {status:'request_already_recorded',request_sent:false};
@@ -28,7 +30,7 @@ export async function sendChangeRequest(i,{env=process.env,fetcher=fetch}={}){
  if(inFlight.has(key))return {status:'request_pending',request_sent:false};
  // Preserve the provider's 24h idempotency window on unknown sends; do not blindly resend after expiry.
  if(prior&&Date.now()-Date.parse(prior.created_at)>23*3600000)return {status:'email_outcome_unknown',request_sent:false};
- const persist=()=>{fs.mkdirSync(path.dirname(file),{recursive:true});const t=file+'.tmp';fs.writeFileSync(t,JSON.stringify(data),{mode:0o600});fs.renameSync(t,file);};
+ const persist=()=>{fs.mkdirSync(path.dirname(file),{recursive:true});const t=file+'.tmp';const fd=fs.openSync(t,'w',0o600);try{fs.writeFileSync(fd,JSON.stringify(data));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(t,file);const dir=fs.openSync(path.dirname(file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}};
  const email=requestEmail(i,{to:env.DEALER_REQUEST_TO,from:env.DEALER_REQUEST_FROM||undefined,test:env.DEALER_REQUEST_TEST_MODE!=='false'});
  data[key]=prior||{hash,created_at:new Date().toISOString(),status:'pending',email};persist();inFlight.add(key);
  try{const r=await fetcher('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+env.RESEND_API_KEY,'Content-Type':'application/json','Idempotency-Key':'lynwood-change-'+key},body:JSON.stringify(data[key].email),signal:AbortSignal.timeout(10000)});const body=await r.json();if(!r.ok||!body.id){data[key].status='unknown';persist();return {status:'email_not_confirmed',request_sent:false};}Object.assign(data[key],{status:'sent',email_id:body.id});persist();return {status:'request_sent',request_sent:true,email_id:body.id};}
