@@ -100,7 +100,6 @@ async function atCalendar(s,input,decision) {
   if(labels.includes('The Works®'))labels=labels.filter(x=>!['Oil Change','Tire Rotation'].includes(x));
   for(const label of labels){
     if(!s.menu.includes(label)) return fail('service_choice_required','Requested service is not in this vehicle’s menu.',{service_menu:s.menu});
-    if(label==='Tire Repair/Replace' && !/tire.*replac|replac.*tire/i.test(input.service_concern||'')) return fail('policy_review_required','Tire repair is not offered. Confirm that replacement is the actual request.');
     const checkbox=p.getByRole('checkbox',exact(label));
     if(!await checkbox.isChecked())await checkbox.locator('xpath=ancestor::label[1]').click();
     await s.waitForReads();
