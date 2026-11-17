@@ -13,17 +13,26 @@ export function requestEmail(i,{to,from='Alpha Drive AI <appointments@alphalabs.
  const html=`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${action} | Alpha Drive AI</title></head><body style="margin:0;background:#050505;font-family:Arial,sans-serif;color:#f5f5f7"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:680px;margin:auto;border:1px solid #333338;border-radius:16px;background:#101014" cellpadding="0" cellspacing="0"><tr><td style="padding:28px;border-bottom:3px solid #ff4650"><img src="https://www.alphalabs.cloud/assets/website-wordmark.png" width="190" alt="Alpha Drive AI" style="display:block;height:auto;max-width:100%"><p style="font-size:12px;letter-spacing:2px;color:#ff6870;margin:20px 0 6px">ALPHA DRIVE AI · SERVICE CONCIERGE</p><h1 style="font-size:28px;margin:8px 0">${action}</h1><p style="margin:0;color:#d0d0d6">Pierre Ford of Lynnwood</p></td></tr><tr><td style="padding:24px">${test?'<p style="color:#ffcf87;font-weight:bold">TEST NOTIFICATION — test inbox only</p>':''}<p style="padding:16px;border:1px solid #6c4145;background:#28191c;line-height:1.6">${notice}</p><table width="100%" style="border-collapse:collapse;font-size:14px;line-height:1.6">${rows.map(([k,v])=>`<tr><th scope="row" style="width:38%;text-align:left;vertical-align:top;padding:12px 12px 12px 0;border-bottom:1px solid #333338;color:#c5c5ce">${esc(k)}</th><td style="padding:12px 0;border-bottom:1px solid #333338;overflow-wrap:anywhere">${esc(v)}</td></tr>`).join('')}</table><p style="font-size:13px;line-height:1.6;color:#c5c5ce">Customer-supplied details are unverified. Requested times are preferences, not confirmed availability.</p><p style="font-size:12px;line-height:1.6;color:#aaaab5">Sent by Alpha Drive AI on behalf of the dealership service concierge.</p></td></tr></table></td></tr></table></body></html>`;
  return {from,to:[to],subject:`${test?'[TEST] ':''}${action} | Pierre Ford of Lynnwood | Alpha Drive AI`,html,text};
 }
+export const requestFingerprint=i=>crypto.createHash('sha256').update(JSON.stringify(requestDetails(i))).digest('hex');
+export function prepareChangeRequest(i){
+ const missing=missingRequest(i);if(missing)return {status:'details_required',missing_field:missing,request_sent:false};
+ const d=requestDetails(i);
+ const summary=`For ${d.customer_name}, callback ${d.caller_phone}, ${d.customer_account_type==='business'?'business account '+d.business_name:'a personal account'}: your ${d.vehicle_year} ${d.vehicle_make} ${d.vehicle_model} is scheduled for ${d.service_concern} at ${d.existing_appointment}. Your request is to ${d.existing_action==='cancel'?'cancel that appointment':'reschedule it to '+d.requested_change}. ${d.transport_option?'Transportation: '+d.transport_option+'. ':''}${d.customer_email?'Email: '+d.customer_email+'. ':''}${d.appointment_id?'Reservation number: '+d.appointment_id+'. ':''}${d.request_notes?'Notes: '+d.request_notes+'. ':''}These are the details you provided. The appointment remains unchanged until the dealership confirms. May I send this request to the service team?`;
+ return {status:'request_ready',request_sent:false,request_summary:summary,request_fingerprint:requestFingerprint(i)};
+}
 const inFlight=new Set();
 const ledgers=new Map();
 export async function sendChangeRequest(i,{env=process.env,fetcher=fetch}={}){
  const missing=missingRequest(i);if(missing)return {status:'details_required',missing_field:missing,request_sent:false};
+ if(i.prepare_only===true||i.prepare_only==='true')return prepareChangeRequest(i);
+ if(i.confirmed_fingerprint!==requestFingerprint(i))return {status:'fresh_readback_required',request_sent:false};
  if(i.request_confirmed!==true&&i.request_confirmed!=='true')return {status:'confirmation_required',request_sent:false};
  const id=clean(i.call_id);if(!id)return {status:'call_id_required',request_sent:false};
  if(!env.RESEND_API_KEY||!env.DEALER_REQUEST_TO||!env.BOOKING_STORE_PATH)return {status:'email_not_configured',request_sent:false};
  const file=path.join(path.dirname(env.BOOKING_STORE_PATH),'change-requests.json');
  if(!ledgers.has(file))ledgers.set(file,fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{});
  const data=ledgers.get(file);
- const hash=crypto.createHash('sha256').update(JSON.stringify(requestDetails(i))).digest('hex');
+ const hash=requestFingerprint(i);
  const key=crypto.createHash('sha256').update(id).digest('hex');const prior=data[key];
  if(prior?.hash!==hash&&prior)return {status:'request_already_recorded',request_sent:false};
  if(prior?.status==='sent')return {status:'request_sent',request_sent:true,email_id:prior.email_id,duplicate_prevented:true};
