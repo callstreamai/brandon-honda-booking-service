@@ -8,7 +8,7 @@ import {ingestReceipt} from './receiptIntake.js';
 import {registerManagementLink,cancelOperation,cancellationConfirmed} from './cancellation.js';
 import {allowedTestCaller,bookingStore,publicRecord} from './bookingStore.js';
 import crypto from 'node:crypto';
-import {dealer,policyDecision} from './policy.js';
+import {dealer,policyDecision,normalizeTransport} from './policy.js';
 import {operate,shutdown,browserStats} from './fordDriver.js';
 import {recover} from './recovery.js';
 const secret=process.env.WEBHOOK_SECRET||'';
@@ -23,6 +23,7 @@ const server=http.createServer(async(req,res)=>{
   let raw='';try{
     for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>32768){send(413,{success:false,status:'too_large'});return;}}
     const input=scrub(JSON.parse(raw));if(!input||Array.isArray(input)||typeof input!=='object')return send(400,{success:false,status:'invalid_body'});
+    input.transport_option=normalizeTransport(input.transport_option);
     if(req.url==='/knowledge/search')return send(200,await searchKnowledge(input));
     if(req.url==='/appointment-change/request')return send(200,await sendChangeRequest(input));
     if(req.url==='/receipts/gmail'){if(!allowedTestCaller(input))return send(403,{accepted:false});const store=bookingStore(),record=store.byId(input.appointment_id);if(!record||record.phone!==String(input.caller_phone).replace(/\D/g,''))return send(404,{accepted:false});return send(200,ingestReceipt(input.email,store,input.appointment_id));}
@@ -33,7 +34,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.url==='/appointments/lookup'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const rows=bookingStore().active(input.caller_phone);return send(200,{success:true,status:rows.length?'appointment_found':'no_appointment',appointments:rows.map(publicRecord)});}
     if(req.url==='/profile/lookup')return send(200,await lookupProfile(input));
     if(req.url==='/valet/review')return send(200,valetReview(input));
-    if(req.url==='/policy'){const policy=policyDecision(input);return send(200,{success:true,policy,next_step:nextSchedulingStep(input,policy),available_slots:[],preferred_time:'none',readback_confirmed:false});}
+    if(req.url==='/policy'){const policy=policyDecision(input);return send(200,{success:true,policy,transport_option:input.transport_option,next_step:nextSchedulingStep(input,policy),available_slots:[],preferred_time:'none',readback_confirmed:false});}
     const result=req.url==='/conversation/help'?await recover(input):await operate(paths[req.url],input);
     send(200,result);
   }catch{send(400,{success:false,status:'invalid_request'});}
