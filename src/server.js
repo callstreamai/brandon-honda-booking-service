@@ -1,3 +1,4 @@
+import {searchKnowledge} from './knowledgeSearch.js';
 import {valetReview} from './valet.js';
 import http from 'node:http';
 import {sendChangeRequest} from './changeRequest.js';
@@ -18,10 +19,11 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&req.url==='/health')return send(200,{status:'ok',dealer:dealer.name,dealer_code:dealer.code,browserless_configured:!!process.env.BROWSERLESS_API_KEY,booking_enabled:process.env.VOICE_TEST_BOOKING_ENABLED==='true',booking_scope:'approved_test_phone_only',durable_store_configured:!!process.env.BOOKING_STORE_PATH,recovery_configured:!!process.env.OPENAI_API_KEY&&process.env.EXTERNAL_RECOVERY_ENABLED==='true',...browserStats()});
   if(!authorized(req))return send(401,{success:false,status:'unauthorized'});
   const paths={'/prepare':'prepare','/availability':'availability','/book':'book','/sessions/close':'close','/booking/review':'review','/booking/state':'inspect'};
-  if(req.method!=='POST'||(!paths[req.url]&&!['/valet/review','/appointment-change/request','/profile/lookup','/policy','/conversation/help','/appointments/lookup','/appointments/link','/receipts/gmail','/appointments/reconcile-cancel','/appointments/receipt','/cancel/review','/cancel','/cancel/state'].includes(req.url)))return send(404,{success:false,status:'not_found'});
+  if(req.method!=='POST'||(!paths[req.url]&&!['/knowledge/search','/valet/review','/appointment-change/request','/profile/lookup','/policy','/conversation/help','/appointments/lookup','/appointments/link','/receipts/gmail','/appointments/reconcile-cancel','/appointments/receipt','/cancel/review','/cancel','/cancel/state'].includes(req.url)))return send(404,{success:false,status:'not_found'});
   let raw='';try{
     for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>32768){send(413,{success:false,status:'too_large'});return;}}
     const input=scrub(JSON.parse(raw));if(!input||Array.isArray(input)||typeof input!=='object')return send(400,{success:false,status:'invalid_body'});
+    if(req.url==='/knowledge/search')return send(200,await searchKnowledge(input));
     if(req.url==='/appointment-change/request')return send(200,await sendChangeRequest(input));
     if(req.url==='/receipts/gmail'){if(!allowedTestCaller(input))return send(403,{accepted:false});const store=bookingStore(),record=store.byId(input.appointment_id);if(!record||record.phone!==String(input.caller_phone).replace(/\D/g,''))return send(404,{accepted:false});return send(200,ingestReceipt(input.email,store,input.appointment_id));}
     if(req.url==='/appointments/reconcile-cancel'){if(!allowedTestCaller(input))return send(403,{success:false});const store=bookingStore(),r=store.byId(input.appointment_id);if(!r||r.phone!==String(input.caller_phone).replace(/\D/g,'')||r.cancel_status!=='unknown'||!cancellationConfirmed(input.confirmation,r.appointment_id))return send(400,{success:false,status:'confirmation_required'});store.update(r,{status:'cancelled',cancel_status:'cancelled',cancel_verification:'operator-reviewed actual provider confirmation'});return send(200,{success:true,status:'cancelled',...publicRecord(r)});}
