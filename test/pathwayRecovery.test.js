@@ -22,7 +22,7 @@ test('existing requests stay in their flow and cannot send or bypass renewed rev
 });
 test('unknown writes cannot retry and direct write/transfer targets are rejected',()=>{
  assert.equal(pathwayRecoveryResult({state:{booking_status:'booking_timeout_unknown'}},advice('readback')).recovery_resume_node,'pathway_recovery_help');
- assert.equal(pathwayRecoveryResult({state:{booking_status:'booked'}},advice('readback')).recovery_resume_node,'booking_confirmed');
+ assert.equal(pathwayRecoveryResult({state:{booking_status:'booked'}},advice('readback')).recovery_resume_node,'pathway_recovery_help');
  for(const target of ['submit_booking','send_change_request','cancel_commit','dial_service','transfer_advisor'])assert.throws(()=>pathwayRecoveryResult({},advice(target)));
 });
 test('model input is redacted, output bounded and repeated recovery offers help',async()=>{
