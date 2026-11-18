@@ -18,3 +18,5 @@ test('mixed Lincoln maintenance and repair always requires Nick',()=>{for(const 
 test('flat and TPMS wording cannot permit waiting',()=>{for(const service_concern of ['flat','flat tyre','low pressure','TPMS warning'])assert.equal(decide({service_concern,transport_option:'wait'}).field,'transport_option');});
 
 test('final routing and covered water leaks',()=>{assert.equal(decide({service_concern:'We Owe'}).target,'sales');assert.equal(decide({service_concern:'water leak',bumper_warranty:'yes',transport_option:'wait'}).action,'schedule');for(const service_concern of ['check engine light diagnosis','heater diagnosis'])assert.equal(decide({service_concern,transport_option:'wait'}).field,'transport_option');});
+
+test('pickup and delivery alias passes the diagnostic transport gate',()=>{const p=decide({vehicle_make:'Lincoln',service_concern:'check engine light and squeaking brakes',transport_option:'pickup and delivery'});assert.equal(p.field,'pickup_address');});
