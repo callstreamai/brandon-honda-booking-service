@@ -1,3 +1,4 @@
+import {isValet} from './valet.js';
 import crypto from 'node:crypto';
 import {accountTypeFor,selectAccountType} from './accountType.js';
 import {isServiceDate} from './policy.js';
@@ -62,11 +63,17 @@ export async function prepareTestReview(s,input){
     await s.waitForReads();
     s.stage='booking_review';
     await p.getByRole('heading',{name:'Reservation Summary',exact:true}).waitFor();
-    const comments=p.getByRole('textbox');
-    if(await comments.count()===1)await comments.fill(('RPA TEST BOOKING: fictional Ford vehicle. '+(input.booking_notes||'')).slice(0,250));
+    const comments=p.locator('#additional-comments__textarea');
+    if(await comments.count()===1){const max=Number(await comments.getAttribute('maxlength'))||125;await comments.fill(('RPA TEST BOOKING: fictional Ford vehicle. '+(input.booking_notes||'')).slice(0,max));}
+    if(isValet(input)){
+      if(input.confirmation_method!=='Phone')throw new Error('Valet requires caller-approved phone contact');
+      const phone=p.locator('#communications-phone');await phone.fill(digits(input.caller_phone));
+      if(digits(await phone.inputValue())!==digits(input.caller_phone))throw new Error('Valet communication phone mismatch');
+    }else{
     const both=p.getByRole('radio',{name:input.confirmation_method||'Both',exact:true});
     if(await both.count()===1){if(!await both.isChecked())await both.locator('xpath=ancestor::label[1]').click();if(!await both.isChecked())throw new Error('Communication preference not applied');}
     else throw new Error('Communication preference needs mapping');
+    }
     const snapshot=await inspectTestBooking(s);
     const candidates=snapshot.buttons.filter(b=>b.enabled&&finalAction.test(b.name));
     if(candidates.length===1){s.finalButton=candidates[0].name;s.reviewToken=crypto.randomUUID();snapshot.review_token=s.reviewToken;snapshot.status='booking_review_ready';}
