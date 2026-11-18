@@ -1,3 +1,4 @@
+import {valetMissing} from './valet.js';
 export const dealer = Object.freeze({
   name: 'Pierre Ford of Lynnwood', code: 'F74024', timezone: 'America/Los_Angeles',
   scheduler: 'https://www.guestxpui.ford.com/?channelType=TIER3DEALERWEB&dealerCode=F74024',
@@ -27,10 +28,11 @@ export function policyDecision(input) {
   }
   if (/shuttle|uber|lyft|rideshare|rental/.test(transport)) return {action:'clarify', field:'transport_option', reason:'No shuttle, rideshare or rental is offered; offer waiting or drop-off when eligible.'};
   const dropOnly = /detail|check engine|heater diagnos|\bflat\b|(?:tire|tyre|low).*pressure|\btpms\b|inoperable|safety/.test(text);
-  if (dropOnly && transport !== 'dropoff') return {action:'clarify', field:'transport_option', reason:'This request requires drop-off; do not promise waiting or safe driving.'};
+  if (dropOnly && transport !== 'dropoff' && !(transport==='pickup'&&/check engine|heater diagnos/.test(text)&&!/detail|inoperable|safety|flat|pressure/.test(text))) return {action:'clarify', field:'transport_option', reason:'This request requires drop-off; do not promise waiting or safe driving.'};
   if (/pickup|delivery/.test(transport)) {
     if (!/^(ford|lincoln)$/i.test(input.vehicle_make || '')) return {action:'clarify', field:'transport_option', reason:'Pickup and delivery is approved for Ford and Lincoln only.'};
-    return {action:'handoff', target:'service', reason:'Pickup and delivery is offered weekdays 8–3 for safe, operable vehicles; the address flow still needs integration validation.'};
+    const missing=valetMissing(input);if(missing)return {action:'clarify',field:missing,reason:'Pickup/delivery requires a confirmed full street/city/state/ZIP address and safe, operable vehicle. Access instructions must fit 125 characters.'};
+    if(input.vehicle_operable!=='yes')return {action:'handoff',target:'service',reason:'Pickup/delivery requires a safe, operable vehicle; arrange appropriate roadside help.'};
   }
   const diagnostic = /fluid|align|warranty|check engine|repair|diagnos|noise|squeak|grind|vibrat|knock|leak|transmission|overheat|stall|won.t start|no start|brake (?:job|replace|service)|replace.*brake/.test(text);
   const express = /oil change|rotation|filter|wiper|bulb|battery|brake inspection|the works/.test(text) && !diagnostic;
@@ -38,7 +40,7 @@ export function policyDecision(input) {
 }
 
 export function inputFingerprint(input) {
-  return JSON.stringify(['customer_account_type','business_name','vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage','service_labels','service_concern','transport_option','bumper_warranty','parts_arrived'].map(k=>input[k] ?? null));
+  return JSON.stringify(['customer_account_type','business_name','vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage','service_labels','service_concern','transport_option','bumper_warranty','parts_arrived','pickup_address','pickup_address_confirmed','pickup_access','vehicle_operable'].map(k=>input[k] ?? null));
 }
 
 export function isServiceDate(date) {
