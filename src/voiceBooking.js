@@ -3,6 +3,7 @@ import {accountTypeFor} from './accountType.js';
 import {inputFingerprint} from './policy.js';
 import {allowedTestCaller,bookingStore,publicRecord,phoneDigits} from './bookingStore.js';
 import {prepareTestReview,commitTestBooking,inspectTestBooking} from './testBooking.js';
+export function bookingSpeech(i,id){if(!/^\d{6,20}$/.test(String(id)))throw Error('invalid_booking_id');return `Ford confirmed your appointment for ${i.service_concern}, ${i.vehicle_year} ${i.vehicle_make} ${i.vehicle_model}, on ${i.preferred_date} at ${i.preferred_time} Pacific. Your reservation number is ${id}. Is there anything else I can help you with?`;}
 export function confirmationFromScreen(snapshot){
  const m=String(snapshot.screen_text||'').match(/Your reservation number is:\s*(\d{6,20})\b/i);
  return snapshot.headings?.some(x=>x.trim()==='Thank You!')&&m?m[1]:null;
@@ -31,8 +32,8 @@ export async function bookVoiceTest(s,input){
  const store=bookingStore();let record=store.byCall(input.call_id);
  if(record){
   if(inputFingerprint(record.input)!==inputFingerprint(input)||record.input.preferred_date!==input.preferred_date||record.input.preferred_time!==input.preferred_time)return {success:false,status:'existing_booking_changed_request',appointment:publicRecord(record),message:'The existing booking is not this corrected request. Do not create another; verify or cancel the existing record first.'};
-  if(record.status==='confirmed')return {success:true,status:'booked',...publicRecord(record)};
-  if(record.status==='unknown'&&s?.writeAttempted){const state=await inspectTestBooking(s);const id=confirmationFromScreen(state);if(id){store.update(record,{status:'confirmed',appointment_id:id});return {success:true,status:'booked',...publicRecord(record)};}}
+  if(record.status==='confirmed')return {success:true,status:'booked',...publicRecord(record),booking_confirmation_speech:bookingSpeech(record.input,record.appointment_id)};
+  if(record.status==='unknown'&&s?.writeAttempted){const state=await inspectTestBooking(s);const id=confirmationFromScreen(state);if(id){store.update(record,{status:'confirmed',appointment_id:id});return {success:true,status:'booked',...publicRecord(record),booking_confirmation_speech:bookingSpeech(record.input,record.appointment_id)};}}
   return {success:false,status:'booking_outcome_unknown',...publicRecord(record)};
  }
  const active=store.active(input.caller_phone);if(active.length)return {success:false,status:'active_test_booking',appointment:publicRecord(active[0]),message:'There is already an outstanding test reservation. Verify or cancel that record before creating another.'};
@@ -50,5 +51,5 @@ export async function bookVoiceTest(s,input){
  if(s.receipts?.length)store.update(record,{receipts:s.receipts});
  if(!appointmentId)return {success:false,status:'booking_outcome_unknown',booking_status:'unknown',message:'Do not submit again. This reservation needs verification.'};
  store.update(record,{status:'confirmed',appointment_id:appointmentId});
- return {success:true,status:'booked',...publicRecord(record)};
+ return {success:true,status:'booked',...publicRecord(record),booking_confirmation_speech:bookingSpeech(record.input,record.appointment_id)};
 }
