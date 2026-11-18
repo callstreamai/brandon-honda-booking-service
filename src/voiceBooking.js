@@ -1,3 +1,4 @@
+import {isValet,normalizeAddress} from './valet.js';
 import {accountTypeFor} from './accountType.js';
 import {inputFingerprint} from './policy.js';
 import {allowedTestCaller,bookingStore,publicRecord,phoneDigits} from './bookingStore.js';
@@ -18,12 +19,13 @@ export function reviewMatches(input,selectedServices,screen){
  if(input.customer_email&&input.customer_email!=='none'&&!plain.includes(input.customer_email.toLowerCase()))return false;
  if(input.transport_option==='dropoff'&&!plain.includes("i'll drop the vehicle off"))return false;
  if(input.transport_option==='wait'&&!/i'll wait|i will wait|waiting/.test(plain))return false;
+ if(isValet(input)&&(!/pickup|pick.up/.test(plain)||!normalizeAddress(plain).includes(normalizeAddress(input.pickup_address))))return false;
  return true;
 }
 export async function bookVoiceTest(s,input){
  if(!allowedTestCaller(input))return {success:false,status:'write_disabled'};
  if(![true,'true'].includes(input.readback_confirmed))return {success:false,status:'readback_required'};
- if(!/^\S+\s+\S/.test(input.customer_name||'')||!['Text','Email','Both'].includes(input.confirmation_method))return {success:false,status:'contact_required'};
+ if(!/^\S+\s+\S/.test(input.customer_name||'')||!['Text','Email','Both','Phone'].includes(input.confirmation_method))return {success:false,status:'contact_required'};
  if(['Text','Both'].includes(input.confirmation_method)&&![true,'true'].includes(input.sms_consent))return {success:false,status:'communications_consent_required'};
  if(['Email','Both'].includes(input.confirmation_method)&&!/^\S+@\S+\.\S+$/.test(input.customer_email||''))return {success:false,status:'email_required'};
  const store=bookingStore();let record=store.byCall(input.call_id);
