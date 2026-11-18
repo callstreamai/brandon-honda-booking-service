@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {recoverPathway} from './pathwayRecovery.js';
 const actions=['correct_account_type','correct_vehicle','correct_service','correct_transport','correct_date','clarify','transfer'];
 const schema={type:'object',additionalProperties:false,properties:{action:{type:'string',enum:actions},advice:{type:'string'},question:{type:['string','null']}},required:['action','advice','question']};
 const fuelSchema={type:'object',additionalProperties:false,properties:{action:{type:'string',enum:['clarify','transfer']},advice:{type:'string'},question:{type:['string','null']},fuel_candidate:{type:['string','null'],enum:['Gas','Hybrid','Diesel','Electric',null]}},required:['action','advice','question','fuel_candidate']};
@@ -20,6 +21,7 @@ export function recoveryResult(input,result){
   return {success:true,recovery_action:action,recovery_advice:unknown?'Staff must verify the unknown booking outcome before any retry.':result.advice,recovery_question:unknown?'none':result.question||'none',recovered_state:state};
 }
 export async function recover(body,env=process.env,fetchImpl=fetch){
+  if(body.scope==='pathway')return recoverPathway(body,env,fetchImpl);
   const input={call_id:body.call_id,state:{},utterance:body.utterance,scope:['account_type','vehicle_type'].includes(body.scope)?body.scope:'general',account_issue:String(body.account_issue||'').slice(0,120)};
   if(input.scope==='vehicle_type')input.last_question=String(body.last_question||'What fuel type does your vehicle have?').slice(0,400);
   if(typeof input.call_id!=='string'||!input.call_id||typeof input.utterance!=='string'||!input.utterance.trim()||input.utterance.length>2000)throw new Error('invalid_input');
