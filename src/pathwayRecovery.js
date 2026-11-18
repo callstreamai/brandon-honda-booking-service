@@ -11,7 +11,7 @@ export function pathwayRecoveryResult(body,result){
  if(dangerous(s))target='pathway_recovery_help';
  else if(['booked','booking_confirmed'].includes(s.booking_status))target='booking_confirmed';
  else if(s.change_email_status==='request_sent'&&['existing_request','prepare_change_request','change_request_readback'].includes(target))target='end_change_request_sent';
- else if(target!=='pathway_recovery_help'&&['cancel','reschedule'].includes(s.existing_action)&&['existing_request','change_request_readback','prepare_change_request'].includes(source)){
+ else if(target!=='pathway_recovery_help'&&['cancel','reschedule'].includes(s.existing_action)){
   const required=['customer_account_type','customer_name','caller_phone','vehicle_year','vehicle_make','vehicle_model','existing_appointment','service_concern'];
   if(s.customer_account_type==='business')required.push('business_name');
   if(s.existing_action==='reschedule')required.push('requested_change','transport_option');
