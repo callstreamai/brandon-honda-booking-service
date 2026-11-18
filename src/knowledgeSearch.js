@@ -9,7 +9,7 @@ export async function searchKnowledge(input,{env=process.env,fetcher=fetch,timeo
  if(!q||q.length>500||typeof id!=='string'||!id||id.length>200)return fallback('invalid_question',started);
  // Even a misrouted request cannot send private identifiers to a search provider.
  if(/@|\b\d[\d ().+-]{8,}\d\b|\b[A-HJ-NPR-Z0-9]{17}\b/i.test(q))return fallback('private_details_blocked',started);
- if(/\b(appointment|reservation|book(?:ing)?|reschedul\w*|cancel\w*|profile|customer|my (?:name|phone|email|address)|price|pricing|cost|quote|loaner|rental|shuttle|coupon|warranty coverage|under warranty|policy|policies|transfer|advisor|walk.?in|pickup|pick.up|valet)\b/i.test(q))return {...fallback('approved_source_required',started),search_answer:'That needs our approved dealership information or the service team; a web search cannot confirm it.'};
+ if(/\b(appointment|reservation|book(?:ing)?|reschedul\w*|cancel\w*|profile|customer|my (?:name|phone|email|address)|hours?|address of (?:the )?(?:dealer|dealership)|dealer(?:ship)? address|price|pricing|cost|quote|loaner|rental|shuttle|coupon|warranty coverage|under warranty|policy|policies|transfer|advisor|walk.?in|pickup|pick.up|valet)\b/i.test(q))return {...fallback('approved_source_required',started),search_answer:'That needs our approved dealership information or the service team; a web search cannot confirm it.'};
  for(const [k,v]of cache)if(v.expires<=started)cache.delete(k);
  for(const [k,v]of calls)if(v.at+1800000<=started)calls.delete(k);
  const key=q.toLowerCase().replace(/\s+/g,' ');
