@@ -24,7 +24,7 @@ test('invented services and diagnosis questions are rejected; unavailable recove
  const r=await resolveServices({call_id:'synthetic-service-timeout',service_concern:'oil package'},menu,env,async()=>{throw new Error('timeout');});assert.equal(r.status,'service_staff_required');
 });
 test('service recovery resumes at the first missing scheduling step rather than repeating wait or contacts',()=>{
- const input={transport_option:'wait',earliest_requested:true,caller_phone:'2025550101',customer_email:'casey@example.com',confirmation_method:'Both'};
+ const input={customer_name:'Casey Test',vehicle_year:'2024',vehicle_make:'Ford',vehicle_model:'F150',vehicle_type:'Gas',service_concern:'oil change',transport_option:'wait',earliest_requested:true,caller_phone:'2025550101',customer_email:'casey@example.com',confirmation_method:'Both'};
  assert.equal(nextSchedulingStep(input,{action:'schedule'}),'availability_check');assert.equal(nextSchedulingStep({...input,earliest_requested:false},{action:'schedule'}),'date_preference');assert.equal(nextSchedulingStep({...input,transport_option:null},{action:'schedule'}),'transport_option');assert.equal(nextSchedulingStep(input,{action:'clarify'}),null);assert.equal(nextSchedulingStep(input,{action:'handoff'}),null);
 });
 
