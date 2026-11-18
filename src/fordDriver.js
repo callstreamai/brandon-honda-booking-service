@@ -1,3 +1,4 @@
+import {applyValetAddress,isValet} from './valet.js';
 import { chromium } from 'playwright-core';
 import {accountTypeFor,selectAccountType} from './accountType.js';
 import {resolveServices} from './serviceRecovery.js';
@@ -116,15 +117,20 @@ async function atCalendar(s,input,decision) {
   await p.getByRole('button',exact('Continue')).click();
   s.stage='service_location';
   await p.getByRole('heading',exact('Select a Service Location')).waitFor();
-  await selectLabeled(p.locator('[id="In-Person"]'));
-  await p.getByRole('button',exact('Continue')).click();
-  s.stage='choose_transport';
-  const transportForm=p.getByLabel('Choose a Transportation Option',{exact:true});
-  await transportForm.getByRole('heading',exact('While Your Vehicle is Serviced')).waitFor();
-  if(!['dropoff','wait'].includes(input.transport_option)) return fail('transport_required','Choose dropoff or wait.');
-  await selectLabeled(transportForm.locator(input.transport_option==='wait'?'[id="Waiter"]':'[id="Drop Off"]'));
-  s.selectedTransport=input.transport_option;
-  await transportForm.getByRole('button',exact('Continue')).click();
+  if(isValet(input)){
+    await selectLabeled(p.locator('[id="Pickup and Delivery"]'));
+    await p.getByRole('button',exact('Continue')).click();
+    s.stage='pickup_address';const result=await applyValetAddress(s,input);if(result)return result;
+    s.selectedTransport='pickup';
+  }else{
+    await selectLabeled(p.locator('[id="In-Person"]'));
+    await p.getByRole('button',exact('Continue')).click();
+    s.stage='choose_transport';const transportForm=p.getByLabel('Choose a Transportation Option',{exact:true});
+    await transportForm.getByRole('heading',exact('While Your Vehicle is Serviced')).waitFor();
+    if(!['dropoff','wait'].includes(input.transport_option))return fail('transport_required','Choose dropoff or wait.');
+    await selectLabeled(transportForm.locator(input.transport_option==='wait'?'[id="Waiter"]':'[id="Drop Off"]'));
+    s.selectedTransport=input.transport_option;await transportForm.getByRole('button',exact('Continue')).click();
+  }
   s.stage='open_calendar';
   await p.getByRole('heading',exact('Choose a Date and Time')).waitFor();
   const advisors=p.locator('#service-advisor');await advisors.waitFor();
@@ -208,7 +214,7 @@ export async function operate(operation,input) {
     const searched=[];
     for(let attempt=0;attempt<(earliest?5:1);attempt++){
     searched.push(date);
-    const result=await selectDate(s.page,date,s.waitForReads);if(result)return result;
+    const result=await selectDate(s.page,date,s.waitForReads);if(result){if(earliest&&result.status==='date_out_of_horizon'&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}return result;}
     // Ford CSP forbids eval-based waits. Use native locator operations and network settling.
     await s.waitForReads();
     const selectedDate=s.page.locator(`[id="${date}"]`);await selectedDate.waitFor({state:'attached'});
@@ -219,14 +225,14 @@ export async function operate(operation,input) {
       if(!await r.isEnabled())continue;
       if(!label)label=await r.locator('xpath=ancestor::label[1]').innerText().catch(()=>'');
       const time=parseTimeLabel(label);
-      if(time){slots.push(time.text);s.slotDetails.push({...time,id:await r.getAttribute('id')});}
+      if(time&&(!isValet(input)||(time.minutes>=480&&time.minutes<=900))){slots.push(time.text);s.slotDetails.push({...time,id:await r.getAttribute('id')});}
     }
     if(!slots.length && !await s.page.getByText('No service times available during the selected time period.',{exact:false}).count())return fail('calendar_unverified','The current calendar screen could not be verified.');
     s.slots=[...new Set(slots)];s.date=date;
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
     // The resolved date becomes authoritative for readback and the final booking request.
     s.fingerprint=inputFingerprint({...input,preferred_date:date});
-    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
+    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,verified_pickup_address:s.pickupAddress||null,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
     }
   } catch(e) {
     if(testOperation&&s&&(s.writeAttempted||s.contactSubmitted)){s.bookingStatus='unknown';return fail('booking_outcome_unknown','Do not retry submission. Verify the existing scheduler session or contact service.',{booking_status:'unknown'});}
