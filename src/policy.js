@@ -31,6 +31,7 @@ export function policyDecision(input) {
   if (dropOnly && transport !== 'dropoff' && !(transport==='pickup'&&/check engine|heater diagnos/.test(text)&&!/detail|inoperable|safety|flat|pressure/.test(text))) return {action:'clarify', field:'transport_option', reason:'This request requires drop-off; do not promise waiting or safe driving.'};
   if (/pickup|delivery/.test(transport)) {
     if (!/^(ford|lincoln)$/i.test(input.vehicle_make || '')) return {action:'clarify', field:'transport_option', reason:'Pickup and delivery is approved for Ford and Lincoln only.'};
+    if(input.vehicle_operable==='no')return {action:'handoff',target:'service',reason:'Pickup/delivery requires a safe, operable vehicle; arrange appropriate roadside help.'};
     const missing=valetMissing(input);if(missing)return {action:'clarify',field:missing,reason:'Pickup/delivery requires a confirmed full street/city/state/ZIP address and safe, operable vehicle. Access instructions must fit 125 characters.'};
     if(input.vehicle_operable!=='yes')return {action:'handoff',target:'service',reason:'Pickup/delivery requires a safe, operable vehicle; arrange appropriate roadside help.'};
   }
@@ -40,7 +41,7 @@ export function policyDecision(input) {
 }
 
 export function inputFingerprint(input) {
-  return JSON.stringify(['customer_account_type','business_name','vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage','service_labels','service_concern','transport_option','bumper_warranty','parts_arrived','pickup_address','pickup_address_confirmed','pickup_access','vehicle_operable'].map(k=>input[k] ?? null));
+  return JSON.stringify(['customer_account_type','business_name','vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage','service_labels','service_concern','transport_option','bumper_warranty','parts_arrived','pickup_address','pickup_address_confirmed','pickup_confirmed_fingerprint','pickup_access','vehicle_operable'].map(k=>input[k] ?? null));
 }
 
 export function isServiceDate(date) {
