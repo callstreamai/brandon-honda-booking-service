@@ -8,8 +8,9 @@ const fields=['customer_account_type','business_name','customer_name','caller_ph
 export function pathwayRecoveryResult(body,result){
  if(!result||!targets.includes(result.resume_node)||typeof result.advice!=='string'||result.advice.length>1200||!(result.question===null||typeof result.question==='string'&&result.question.length<=300))throw Error('invalid_recovery_result');
  const s=body.state||{},source=body.source_node;let target=result.resume_node;
+ if(['booking_confirmed','offer_times','no_availability','readback'].includes(target))target='policy_hook';
  if(dangerous(s))target='pathway_recovery_help';
- else if(['booked','booking_confirmed'].includes(s.booking_status))target='booking_confirmed';
+ else if(['booked','booking_confirmed','confirmed'].includes(s.booking_status))target='pathway_recovery_help';
  else if(s.change_email_status==='request_sent'&&['existing_request','prepare_change_request','change_request_readback'].includes(target))target='end_change_request_sent';
  else if(target!=='pathway_recovery_help'&&['cancel','reschedule'].includes(s.existing_action)){
   const required=['customer_account_type','customer_name','caller_phone','vehicle_year','vehicle_make','vehicle_model','existing_appointment','service_concern'];
