@@ -8,9 +8,16 @@ export const dealer = Object.freeze({
   nightDrop: 'north end of the building', towing: {name:'R&R Star', phone:'4257789557'}
 });
 
+export function normalizeTransport(value) {
+  const t=String(value||'').trim().toLowerCase();
+  if (/^(pickup|pick[ -]?up(?: and delivery)?|pickup\/delivery|valet|delivery)$/.test(t)) return 'pickup';
+  if (/^(drop[ -]?off|leave it with you|drop the vehicle off)$/.test(t)) return 'dropoff';
+  if (/^(wait|waiting|waiter)$/.test(t)) return 'wait';
+  return t;
+}
 export function policyDecision(input) {
   const text = `${input.service_concern || ''} ${input.service_free_text || ''} ${input.initial_request || ''}`.toLowerCase();
-  const transport = String(input.transport_option || '').toLowerCase();
+  const transport = normalizeTransport(input.transport_option);
   if (/recall/.test(text)) return {action:'handoff', target:'service', reason:'Collect the known recall description; service must verify remedy and parts.'};
   if (/\bwe[ -]?owe\b|sales promised/.test(text)) return {action:'handoff', target:'sales', reason:'We Owes go to Sales.'};
   if (/mobile service/.test(text+' '+transport)) return {action:'handoff', target:'mc', reason:'Mobile service is arranged by MC.'};
