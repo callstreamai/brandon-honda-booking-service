@@ -16,6 +16,7 @@ test('known fields advance without re-collecting',()=>{
 test('existing requests stay in their flow and cannot send or bypass renewed review',()=>{
  const b={source_node:'change_request_readback',state:{...state,existing_action:'reschedule',existing_appointment:'November 23 9 AM',requested_change:'November 24 10 AM'}};
  assert.equal(pathwayRecoveryResult(b,advice('vehicle_year')).recovery_resume_node,'prepare_change_request');
+ assert.equal(pathwayRecoveryResult({...b,source_node:'transport_option'},advice('change_request_readback')).recovery_resume_node,'prepare_change_request');
  assert.equal(pathwayRecoveryResult(b,advice('pathway_recovery_help')).recovery_resume_node,'pathway_recovery_help');
  b.state.change_email_status='request_sent';assert.equal(pathwayRecoveryResult(b,advice('existing_request')).recovery_resume_node,'end_change_request_sent');
 });
