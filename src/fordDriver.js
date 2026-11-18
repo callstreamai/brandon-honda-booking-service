@@ -183,7 +183,8 @@ export async function operate(operation,input) {
   }
   const testOperation=['book','review','inspect'].includes(operation);
   if(testOperation&&!isAuthorizedTestBooking(input)&&!allowedTestCaller(input))return fail('write_disabled','General booking is disabled. This operation requires the exact, unexpired, user-approved test fixture.');
-  const decision=policyDecision(input);
+  // Preparing only loads the vehicle service menu; valet address validation belongs to availability/review.
+  const decision=policyDecision(operation==='prepare'&&input.transport_option==='pickup'?{...input,transport_option:'dropoff'}:input);
   if(decision.action!=='schedule') return fail('policy_'+decision.action,decision.reason,{policy:decision});
   let s=sessions.get(key);
   if(active.has(key)||s?.busy) return fail('session_busy','This caller’s scheduler operation is already running.');
