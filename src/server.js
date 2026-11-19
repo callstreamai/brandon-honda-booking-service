@@ -1,4 +1,5 @@
 import {searchKnowledge} from './knowledgeSearch.js';
+import {audioOperation,transcribeClip,checkEmail,audioStats,closeAudio} from './audioRecovery.js';
 import {valetReview} from './valet.js';
 import http from 'node:http';
 import {sendChangeRequest} from './changeRequest.js';
@@ -16,14 +17,17 @@ function authorized(req){const a=Buffer.from(req.headers.authorization||''),b=Bu
 function scrub(v){if(typeof v==='string'&&(/^\s*\{\{.*\}\}\s*$/.test(v)||v==='none'))return null;if(Array.isArray(v))return v.map(scrub);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,scrub(x)]));return v;}
 const server=http.createServer(async(req,res)=>{
   const send=(code,data)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
-  if(req.method==='GET'&&req.url==='/health')return send(200,{status:'ok',dealer:dealer.name,dealer_code:dealer.code,browserless_configured:!!process.env.BROWSERLESS_API_KEY,booking_enabled:process.env.VOICE_TEST_BOOKING_ENABLED==='true',booking_scope:'approved_test_phone_only',durable_store_configured:!!process.env.BOOKING_STORE_PATH,recovery_configured:!!process.env.OPENAI_API_KEY&&process.env.EXTERNAL_RECOVERY_ENABLED==='true',...browserStats()});
+  if(req.method==='GET'&&req.url==='/health')return send(200,{status:'ok',dealer:dealer.name,dealer_code:dealer.code,browserless_configured:!!process.env.BROWSERLESS_API_KEY,booking_enabled:process.env.VOICE_TEST_BOOKING_ENABLED==='true',booking_scope:'approved_test_phone_only',durable_store_configured:!!process.env.BOOKING_STORE_PATH,recovery_configured:!!process.env.OPENAI_API_KEY&&process.env.EXTERNAL_RECOVERY_ENABLED==='true',...browserStats(),...audioStats()});
   if(!authorized(req))return send(401,{success:false,status:'unauthorized'});
   const paths={'/prepare':'prepare','/availability':'availability','/book':'book','/sessions/close':'close','/booking/review':'review','/booking/state':'inspect'};
-  if(req.method!=='POST'||(!paths[req.url]&&!['/knowledge/search','/valet/review','/appointment-change/request','/profile/lookup','/policy','/conversation/help','/appointments/lookup','/appointments/link','/receipts/gmail','/appointments/reconcile-cancel','/appointments/receipt','/cancel/review','/cancel','/cancel/state'].includes(req.url)))return send(404,{success:false,status:'not_found'});
+  if(req.method!=='POST'||(!paths[req.url]&&!['/speech/start','/speech/recover','/speech/close','/speech/check-email','/speech/test','/knowledge/search','/valet/review','/appointment-change/request','/profile/lookup','/policy','/conversation/help','/appointments/lookup','/appointments/link','/receipts/gmail','/appointments/reconcile-cancel','/appointments/receipt','/cancel/review','/cancel','/cancel/state'].includes(req.url)))return send(404,{success:false,status:'not_found'});
   let raw='';try{
-    for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>32768){send(413,{success:false,status:'too_large'});return;}}
+    for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>(req.url==='/speech/test'&&process.env.AUDIO_TEST_ENABLED==='true'?2000000:32768)){send(413,{success:false,status:'too_large'});return;}}
     const input=scrub(JSON.parse(raw));if(!input||Array.isArray(input)||typeof input!=='object')return send(400,{success:false,status:'invalid_body'});
     input.transport_option=normalizeTransport(input.transport_option);
+    if(req.url==='/speech/check-email')return send(200,checkEmail(input));
+    if(['/speech/start','/speech/recover','/speech/close'].includes(req.url))return send(200,await audioOperation(req.url.split('/').pop(),input));
+    if(req.url==='/speech/test'){if(process.env.AUDIO_TEST_ENABLED!=='true'||!allowedTestCaller(input))return send(403,{success:false,status:'test_disabled'});return send(200,await transcribeClip(Buffer.from(String(input.pcm_base64||''),'base64'),input.audio_field));}
     if(req.url==='/knowledge/search')return send(200,await searchKnowledge(input));
     if(req.url==='/appointment-change/request')return send(200,await sendChangeRequest(input));
     if(req.url==='/receipts/gmail'){if(!allowedTestCaller(input))return send(403,{accepted:false});const store=bookingStore(),record=store.byId(input.appointment_id);if(!record||record.phone!==String(input.caller_phone).replace(/\D/g,''))return send(404,{accepted:false});return send(200,ingestReceipt(input.email,store,input.appointment_id));}
@@ -40,4 +44,4 @@ const server=http.createServer(async(req,res)=>{
   }catch{send(400,{success:false,status:'invalid_request'});}
 });
 server.listen(Number(process.env.PORT||10000),'0.0.0.0');
-process.on('SIGTERM',()=>{server.close();void shutdown().finally(()=>process.exit(0));});
+process.on('SIGTERM',()=>{closeAudio();server.close();void shutdown().finally(()=>process.exit(0));});
