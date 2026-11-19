@@ -12,6 +12,7 @@ import crypto from 'node:crypto';
 import {dealer,policyDecision,normalizeTransport} from './policy.js';
 import {operate,shutdown,browserStats} from './fordDriver.js';
 import {recover} from './recovery.js';
+import {normalizeResponseState} from './responseValues.js';
 const secret=process.env.WEBHOOK_SECRET||'';
 function authorized(req){const a=Buffer.from(req.headers.authorization||''),b=Buffer.from('Bearer '+secret);return !!secret&&a.length===b.length&&crypto.timingSafeEqual(a,b);}
 function scrub(v){if(typeof v==='string'&&(/^\s*\{\{.*\}\}\s*$/.test(v)||v==='none'))return null;if(Array.isArray(v))return v.map(scrub);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,scrub(x)]));return v;}
@@ -25,6 +26,8 @@ const server=http.createServer(async(req,res)=>{
     for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>(req.url==='/speech/test'&&process.env.AUDIO_TEST_ENABLED==='true'?2000000:32768)){send(413,{success:false,status:'too_large'});return;}}
     const input=scrub(JSON.parse(raw));if(!input||Array.isArray(input)||typeof input!=='object')return send(400,{success:false,status:'invalid_body'});
     input.transport_option=normalizeTransport(input.transport_option);
+    Object.assign(input,normalizeResponseState(input));
+    if(input.state)input.state=normalizeResponseState(input.state);
     if(req.url==='/speech/check-email')return send(200,checkEmail(input));
     if(['/speech/open','/speech/recover','/speech/close'].includes(req.url))return send(200,await audioOperation(req.url.split('/').pop(),input));
     if(req.url==='/speech/test'){if(process.env.AUDIO_TEST_ENABLED!=='true'||!allowedTestCaller(input))return send(403,{success:false,status:'test_disabled'});return send(200,await transcribeClip(Buffer.from(String(input.pcm_base64||''),'base64'),input.audio_field));}
