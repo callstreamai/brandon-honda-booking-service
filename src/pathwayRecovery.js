@@ -83,12 +83,16 @@ export async function recoverPathway(body,env=process.env,fetcher=fetch){
   if(!response.ok)throw Error('model_error');const p=await response.json();if(p.status!=='completed')throw Error('incomplete');const text=p.output.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
   const parsed=JSON.parse(text);
   for(const item of parsed.interpretations||[]){
-   const exact=literalFields.includes(item.field)&&String(item.value).trim().toLowerCase()===String(item.evidence).trim().toLowerCase();
+   const value=String(item.value).trim().toLowerCase(),evidence=String(item.evidence).trim().toLowerCase();
+   // A literal field can be a quoted span within the cited caller sentence.
+   // Requiring the value to equal the entire sentence rejected ordinary
+   // corrections such as "Just schedule an oil change instead" -> "oil change".
+   const exact=literalFields.includes(item.field)&&value.length>=3&&evidence.includes(value);
    const phone=item.field==='caller_phone'&&validPhone(item.value)&&String(item.value).replace(/\D/g,'')===String(item.evidence).replace(/\D/g,'');
    if(!(canonicalChoices[item.field]?.includes(item.value)||exact||phone)||typeof item.evidence!=='string'||item.evidence.length<3||!(input.utterance+' '+input.context).toLowerCase().includes(item.evidence.toLowerCase()))throw Error('unsupported_interpretation');
    input.state[item.field]=item.value;
   }
   if((parsed.interpretations||[]).length && !['cancel','reschedule'].includes(input.state.existing_action)){parsed.resume_node=knownFieldResume(stage,input.state)||'policy_hook';parsed.question=null;}
   return decorate(pathwayRecoveryResult(input,parsed));
- }catch{return safe('The helper could not resolve this quickly. Preserve the supplied details and offer staff help rather than repeat the question.');}finally{clearTimeout(timer);entry.busy=false;}
+ }catch(e){return {...safe('The helper could not resolve this step. Preserve the supplied details and offer staff help rather than repeat the question.'),recovery_error:['unsupported_interpretation','invalid_recovery_result','timeout','model_error','incomplete'].includes(e.message)?e.message:'invalid_model_response'};}finally{clearTimeout(timer);entry.busy=false;}
 }
