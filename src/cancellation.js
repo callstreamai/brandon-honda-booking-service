@@ -28,7 +28,7 @@ export async function cancelOperation(operation,input){
    store.update(r,{cancel_status:'unknown'});s.stage='cancel_result';
    try{await final.click();await s.wait();}catch{}
    const view=await snapshot(s,input);store.update(r,{cancel_view:{screen_text:view.screen_text,headings:view.headings},cancel_call_id:input.call_id});
-   if(cancellationConfirmed(view,r.appointment_id)){store.update(r,{status:'cancelled',cancel_status:'cancelled'});return {success:true,status:'cancelled',...publicRecord(r)};}
+   if(cancellationConfirmed(view,r.appointment_id)){store.update(r,{status:'cancelled',cancel_status:'cancelled'});sessions.delete(input.call_id);await s.browser.close().catch(()=>{});return {success:true,status:'cancelled',...publicRecord(r)};}
    // Other success wording must be mapped from observed outcome, never guessed.
    return {...view,status:'cancellation_outcome_unknown'};
   }
