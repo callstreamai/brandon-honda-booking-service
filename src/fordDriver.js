@@ -221,13 +221,20 @@ export async function operate(operation,input) {
     const selectedDate=s.page.locator(`[id="${date}"]`);await selectedDate.waitFor({state:'attached'});
     if(!await selectedDate.isChecked())return fail('calendar_unverified','The requested date was not selected.');
     const radios=s.page.getByRole('radio');const slots=[];s.slotDetails=[];
-    for(let i=0;i<await radios.count();i++){
-      const r=radios.nth(i);let label=await r.getAttribute('aria-label');
-      if(!await r.isEnabled())continue;
-      if(!label)label=await r.locator('xpath=ancestor::label[1]').innerText().catch(()=>'');
-      const time=parseTimeLabel(label);
-      if(time&&(!isValet(input)||(time.minutes>=480&&time.minutes<=900))){slots.push(time.text);s.slotDetails.push({...time,id:await r.getAttribute('id')});}
+    // Independent reads on the settled calendar can share one browser round trip window.
+    // Keep all selection/booking actions sequential and preserve displayed slot order.
+    const count=await radios.count(),rows=[];
+    for(let start=0;start<count;start+=8){
+      rows.push(...await Promise.all(Array.from({length:Math.min(8,count-start)},async(_,offset)=>{
+        const r=radios.nth(start+offset);
+        const [enabled,aria,id]=await Promise.all([r.isEnabled(),r.getAttribute('aria-label'),r.getAttribute('id')]);
+        if(!enabled)return null;
+        const label=aria||await r.locator('xpath=ancestor::label[1]').innerText().catch(()=>'');
+        const time=parseTimeLabel(label);
+        return time&&(!isValet(input)||(time.minutes>=480&&time.minutes<=900))?{...time,id}:null;
+      })));
     }
+    for(const row of rows.filter(Boolean)){slots.push(row.text);s.slotDetails.push(row);}
     if(!slots.length && !await s.page.getByText('No service times available during the selected time period.',{exact:false}).count())return fail('calendar_unverified','The current calendar screen could not be verified.');
     s.slots=[...new Set(slots)];s.date=date;
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
