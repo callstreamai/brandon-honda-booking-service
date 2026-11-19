@@ -26,7 +26,7 @@ export function reviewMatches(input,selectedServices,screen){
 export async function bookVoiceTest(s,input){
  if(!allowedTestCaller(input))return {success:false,status:'write_disabled'};
  if(![true,'true'].includes(input.readback_confirmed))return {success:false,status:'readback_required'};
- if(!/^\S+\s+\S/.test(input.customer_name||'')||!['Text','Email','Both','Phone'].includes(input.confirmation_method))return {success:false,status:'contact_required'};
+ if((accountTypeFor(input)==='business'?!String(input.business_name||'').trim():!/^\S+\s+\S/.test(input.customer_name||''))||!['Text','Email','Both','Phone'].includes(input.confirmation_method))return {success:false,status:'contact_required'};
  if(['Text','Both'].includes(input.confirmation_method)&&![true,'true'].includes(input.sms_consent))return {success:false,status:'communications_consent_required'};
  if(['Email','Both'].includes(input.confirmation_method)&&!/^\S+@\S+\.\S+$/.test(input.customer_email||''))return {success:false,status:'email_required'};
  const store=bookingStore();let record=store.byCall(input.call_id);
