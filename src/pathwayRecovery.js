@@ -16,13 +16,18 @@ export function knownFieldResume(source,s){
   fuel_type:fuel?'contact_email':null,
   contact_email:yes(s.email_confirmed)&&validEmail(s.customer_email||'')?'contact_confirmation':null,
   business_email:yes(s.email_confirmed)&&validEmail(s.customer_email||'')?'contact_confirmation':null,
-  contact_confirmation:['Text','Email','Both','None','Phone'].includes(s.confirmation_method)?'vehicle_mileage':null,
+  contact_confirmation:['text','email','both','none','phone'].includes(String(s.confirmation_method||'').toLowerCase())?'vehicle_mileage':null,
   vehicle_mileage:(!blank(s.vehicle_mileage)||s.vehicle_mileage==='unknown')?'prepare_hook':null,
   service_need:yes(s.service_complete)&&!blank(s.service_labels)?'policy_hook':null,
   transport_option:['dropoff','wait','pickup'].includes(s.transport_option)?'policy_hook':null,
   date_preference:(/^\d{4}-\d{2}-\d{2}$/.test(String(s.preferred_date||''))||yes(s.earliest_requested))?'policy_hook':null
  };
- return map[source]||null;
+ let next=map[source]||null;
+ const visited=new Set([source]);
+ while(next && map[next] && !visited.has(next)){
+  visited.add(next);next=map[next];
+ }
+ return next;
 }
 export function pathwayRecoveryResult(body,result){
  if(!result||!targets.includes(result.resume_node)||typeof result.advice!=='string'||result.advice.length>1200||!(result.question===null||typeof result.question==='string'&&result.question.length<=300))throw Error('invalid_recovery_result');
