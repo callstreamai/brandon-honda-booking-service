@@ -27,7 +27,7 @@ const server=http.createServer(async(req,res)=>{
     input.transport_option=normalizeTransport(input.transport_option);
     if(req.url==='/speech/check-email')return send(200,checkEmail(input));
     if(['/speech/open','/speech/start','/speech/recover','/speech/close'].includes(req.url))return send(200,await audioOperation(req.url.split('/').pop(),input));
-    if(req.url==='/speech/test'){if(process.env.AUDIO_TEST_ENABLED!=='true'||!allowedTestCaller(input))return send(403,{success:false,status:'test_disabled'});return send(200,await transcribeClip(Buffer.from(String(input.pcm_base64||''),'base64'),input.audio_field,process.env,fetch,input.diagnostic===true));}
+    if(req.url==='/speech/test'){if(process.env.AUDIO_TEST_ENABLED!=='true'||!allowedTestCaller(input))return send(403,{success:false,status:'test_disabled'});return send(200,await transcribeClip(Buffer.from(String(input.pcm_base64||''),'base64'),input.audio_field));}
     if(req.url==='/knowledge/search')return send(200,await searchKnowledge(input));
     if(req.url==='/appointment-change/request')return send(200,await sendChangeRequest(input));
     if(req.url==='/receipts/gmail'){if(!allowedTestCaller(input))return send(403,{accepted:false});const store=bookingStore(),record=store.byId(input.appointment_id);if(!record||record.phone!==String(input.caller_phone).replace(/\D/g,''))return send(404,{accepted:false});return send(200,ingestReceipt(input.email,store,input.appointment_id));}
