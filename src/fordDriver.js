@@ -66,7 +66,7 @@ async function newSession(input) {
       s.stage=field;
       if(!input[field]) {await close(s);return fail('vehicle_details_required',`Please provide ${label}.`,{missing_field:field});}
       const result=await choose(page.getByLabel(label,{exact:true}),input[field]);
-      if(result){await close(s);return fail('vehicle_choice_required',`Select the scheduler's ${label}.`,{missing_field:field,choices:result.choices});}
+      if(result){await close(s);return fail('vehicle_choice_required',`The supplied ${label} is not listed for this vehicle selection.`,{missing_field:field,choices:result.choices,adapter_question:`I have ${input.vehicle_year} ${input.vehicle_make} ${input.vehicle_model}. The online scheduler does not list that ${label.toLowerCase()} for this selection. Would you like me to connect you with Service to arrange the appointment?`});}
     }
     s.selectedVehicle={};
     for(const [key,id]of [['make','make-input'],['year','year-input'],['model','model-input'],['type','vehicle-type-input']])s.selectedVehicle[key]=(await page.locator('#'+id+' option:checked').textContent()).trim();
