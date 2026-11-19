@@ -1,6 +1,15 @@
 export const validEmail=x=>typeof x==='string'&&x.length<=254&&/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(x);
 export const spokenEmail=x=>String(x).split('').map(c=>({'@':' at ','.':' dot ','-':' dash ','_':' underscore ','+':' plus '}[c]||c+' ')).join('').replace(/\s+/g,' ').trim();
 const attempts=new Map();
+// Parse explicit spelling only. Never autocorrect a domain or guess letters.
+export function spelledEmail(value){
+ const s=String(value).trim().replace(/^(?:no[,.]?\s*)?(?:it(?:'s| is)|that(?:'s| is)|my email is)\s+/i,'').replace(/[.!?]+$/,'');
+ if(/\b(?:or|maybe|think|not sure|as in)\b/i.test(s))return null;
+ const parts=s.split(/\s+at\s+|@/i);if(parts.length!==2)return null;
+ const decode=p=>p.toLowerCase().replace(/\bdot\b/g,'.').replace(/\bdash\b/g,'-').replace(/\bunderscore\b/g,'_').replace(/\bplus\b/g,'+').replace(/\s+/g,'');
+ const candidate=parts.map(decode).join('@');
+ return validEmail(candidate)?candidate:null;
+}
 export async function recoverEmail(body,env=process.env,fetcher=fetch){
  let utterance=String(body.utterance||'').slice(0,1400);const previous=String(body.previous_email||'').slice(0,254);
  if(env.AUDIO_FALLBACK_ENABLED==='true'&&body.audio_supported===true&&previous&&previous!=='none'&&!previous.includes('{{')&&!validEmail(previous)&&![true,'true'].includes(body.audio_fallback_attempted))return {success:true,email_helper_status:'audio_required',audio_field:'email',recognition_problem:true,email_confirmed:false};
@@ -18,6 +27,7 @@ export async function recoverEmail(body,env=process.env,fetcher=fetch){
   }
   n.partial='';attempts.set(key,n);
  }
+ const spelled=spelledEmail(utterance);if(spelled)return result(spelled);
  if(!key||n.n>=2||attempts.size>=500)return {...result(null,false,'I could not verify the email. Would you like to leave it out or speak with Service?'),email_helper_status:'unresolved'};
  if(env.EXTERNAL_RECOVERY_ENABLED!=='true'||!env.OPENAI_API_KEY||!env.OPENAI_MODEL)return result(null);
  attempts.set(key,{n:n.n+1,at:now});
