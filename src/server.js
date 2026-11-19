@@ -3,6 +3,7 @@ import {audioOperation,transcribeClip,checkEmail,audioStats,closeAudio} from './
 import {valetReview} from './valet.js';
 import http from 'node:http';
 import {sendChangeRequest} from './changeRequest.js';
+import {createChangeDraftHandler} from './changeDraft.js';
 import {nextSchedulingStep} from './schedulingResume.js';
 import {lookupProfile} from './profileLookup.js';
 import {ingestReceipt} from './receiptIntake.js';
@@ -16,6 +17,7 @@ import {normalizeResponseState} from './responseValues.js';
 import {createAvailabilityPrefetch,searchInput} from './availabilityPrefetch.js';
 import {confirmedEmailState} from './emailConfirmation.js';
 const availabilityPrefetch=createAvailabilityPrefetch(operate);
+const handleChangeDraft=createChangeDraftHandler();
 const secret=process.env.WEBHOOK_SECRET||'';
 function authorized(req){const a=Buffer.from(req.headers.authorization||''),b=Buffer.from('Bearer '+secret);return !!secret&&a.length===b.length&&crypto.timingSafeEqual(a,b);}
 function scrub(v){if(typeof v==='string'&&(/^\s*\{\{.*\}\}\s*$/.test(v)||v==='none'))return null;if(Array.isArray(v))return v.map(scrub);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,scrub(x)]));return v;}
@@ -37,7 +39,7 @@ const server=http.createServer(async(req,res)=>{
     if(['/speech/open','/speech/recover','/speech/close'].includes(req.url))return send(200,await audioOperation(req.url.split('/').pop(),input));
     if(req.url==='/speech/test'){if(process.env.AUDIO_TEST_ENABLED!=='true'||!allowedTestCaller(input))return send(403,{success:false,status:'test_disabled'});return send(200,await transcribeClip(Buffer.from(String(input.pcm_base64||''),'base64'),input.audio_field));}
     if(req.url==='/knowledge/search')return send(200,await searchKnowledge(input));
-    if(req.url==='/appointment-change/request')return send(200,await sendChangeRequest(input));
+    if(req.url==='/appointment-change/request')return send(200,await handleChangeDraft(input));
     if(req.url==='/receipts/gmail'){if(!allowedTestCaller(input))return send(403,{accepted:false});const store=bookingStore(),record=store.byId(input.appointment_id);if(!record||record.phone!==String(input.caller_phone).replace(/\D/g,''))return send(404,{accepted:false});return send(200,ingestReceipt(input.email,store,input.appointment_id));}
     if(req.url==='/appointments/reconcile-cancel'){if(!allowedTestCaller(input))return send(403,{success:false});const store=bookingStore(),r=store.byId(input.appointment_id);if(!r||r.phone!==String(input.caller_phone).replace(/\D/g,'')||r.cancel_status!=='unknown'||!cancellationConfirmed(input.confirmation,r.appointment_id))return send(400,{success:false,status:'confirmation_required'});store.update(r,{status:'cancelled',cancel_status:'cancelled',cancel_verification:'operator-reviewed actual provider confirmation'});return send(200,{success:true,status:'cancelled',...publicRecord(r)});}
     if(req.url==='/appointments/receipt'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const r=bookingStore().byId(input.appointment_id);return send(200,r&&r.phone===String(input.caller_phone).replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'')?{success:true,record:r}:{success:false,status:'appointment_not_found'});}
