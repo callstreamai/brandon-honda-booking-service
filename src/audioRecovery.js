@@ -38,6 +38,19 @@ export async function audioOperation(op,input,env=process.env,fetcher=fetch,WS=W
  if(!/^[a-f0-9-]{36}$/i.test(id)||!['email','address'].includes(field))return fallback('invalid_input');
  if(op==='close'){destroy(id);return {success:true,audio_status:'closed'};}
  if(env.AUDIO_FALLBACK_ENABLED!=='true')return fallback('disabled');
+ if(op==='open'){
+  if(input.recognition_problem!==true&&input.recognition_problem!=='true')return fallback('not_needed');
+  if(['web_chat','chat'].includes(input.conversation_channel))return fallback('voice_only');
+  if(!env.BLAND_LIVE_LISTEN_API_KEY)return fallback('listen_not_configured');
+  try{
+   const headers={authorization:env.BLAND_LIVE_LISTEN_API_KEY,'Content-Type':'application/json'},signal=AbortSignal.timeout(5000);
+   const check=await fetcher('https://api.bland.ai/v1/calls/'+id,{headers,signal});if(!check.ok)return fallback('call_unavailable');
+   let call=await check.json();while(call?.data&&!call.pathway_id)call=call.data;
+   if(call.pathway_id!=='e90854b7-0d4c-418a-81ad-59b1a027c0cc'||call.completed===true)return fallback('call_not_allowed');
+   const response=await fetcher('https://api.bland.ai/v1/calls/'+id+'/listen',{method:'POST',headers,signal,body:'{}'});if(!response.ok)return fallback('listen_unavailable');
+   const payload=await response.json();return audioOperation('start',{...input,listen_url:payload.data?.url},env,fetcher,WS);
+  }catch{return fallback('listen_unavailable');}
+ }
  const now=Date.now();for(const[k,v]of attempts)if(now-v.at>1800000)attempts.delete(k);
  if(op==='start'){
   if(input.recognition_problem!==true&&input.recognition_problem!=='true')return fallback('not_needed');
