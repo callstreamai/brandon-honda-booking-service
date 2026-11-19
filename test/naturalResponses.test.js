@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import {normalizeResponseState,canonicalValue} from '../src/responseValues.js';
 import {recoverPathway} from '../src/pathwayRecovery.js';
 import {recover} from '../src/recovery.js';
+test('bare yes to a fuel list cannot confirm a hallucinated extracted Hybrid',async()=>{
+ const b={call_id:'bare-yes-list',scope:'vehicle_type',utterance:'Yes.',last_question:'Is it gas or hybrid?',state:{vehicle_type:'Hybrid',vehicle_model:'Maverick'}};
+ const r=await recover(b,{},()=>{throw Error('model not required');});assert.equal(r.recovery_action,'clarify');assert.equal(r.recovered_state.vehicle_type,null);assert.equal(r.recovered_state.vehicle_model,'Maverick');
+ assert.equal((await recover(b,{})).recovery_action,'transfer');
+});
 test('actual failed call gasoline and natural category variants normalize without erasing details',()=>{
  const s={vehicle_type:'Gasoline',customer_account_type:'Personal',transport_option:'leave it with you',confirmation_method:'both',customer_name:'Vince',customer_email:'vince@alphadriveai.com',vehicle_model:'Maverick',sms_consent:false};
  const r=normalizeResponseState(s);assert.equal(r.vehicle_type,'Gas');assert.equal(r.transport_option,'dropoff');assert.equal(r.confirmation_method,'Both');assert.equal(r.customer_account_type,'individual');assert.equal(r.customer_email,s.customer_email);assert.equal(r.sms_consent,false);assert.equal(s.vehicle_type,'Gasoline');
