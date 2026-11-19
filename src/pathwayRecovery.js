@@ -58,6 +58,10 @@ export function pathwayRecoveryResult(body,result){
 }
 export async function recoverPathway(body,env=process.env,fetcher=fetch){
  if(typeof body.call_id!=='string'||!body.call_id||typeof body.utterance!=='string')throw Error('invalid_input');
+ // Reuse the established email owner for explicit contact corrections. This
+ // prevents generic recovery from retaining a prior email refusal or claiming
+ // to apply characters it never parsed. Existing booking uncertainty still wins.
+ if([true,'true'].includes(body.completion_fallbacks)&&!dangerous(body.state||{})&&!['booked','confirmed','booking_confirmed'].includes(body.state?.booking_status)&&/\bemail\b|@/i.test(body.utterance))return {success:true,recovery_status:'resume_email',recovery_resume_node:'email_recovery_helper',recovery_needed:false,email_utterance:body.utterance.slice(0,1400)};
  const input={source_node:String(body.source_node||'').slice(0,100),utterance:body.utterance.slice(0,2000),last_question:String(body.last_question||'').slice(0,700),reason:String(body.reason||'').slice(0,500),context:String(body.context||'').slice(0,2200),state:{}};
  for(const k of fields){const v=body.state?.[k];if(v!=null&&!['string','boolean','number'].includes(typeof v))continue;input.state[k]=typeof v==='string'?v.slice(0,1600):v??null;}
  input.state=normalizeResponseState(input.state);

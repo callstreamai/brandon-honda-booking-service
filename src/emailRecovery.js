@@ -6,6 +6,10 @@ export function spelledEmail(value){
  const s=String(value).trim().replace(/^(?:no[,.]?\s*)?(?:it(?:'s| is)|that(?:'s| is)|my email is)\s+/i,'').replace(/[.!?]+$/,'');
  if(/\b(?:or|maybe|think|not sure|as in)\b/i.test(s))return null;
  const parts=s.split(/\s+at\s+|@/i);if(parts.length!==2)return null;
+ // Saying a word and then spelling that same word is contextual speech, not
+ // two literal copies. Let the existing email helper interpret it.
+ const tokens=s.toLowerCase().split(/\s+/);
+ if(tokens.some((word,i)=>/^[a-z]{2,}$/.test(word)&&tokens.slice(i+1,i+1+word.length).every(x=>/^[a-z]$/.test(x))&&tokens.slice(i+1,i+1+word.length).join('')===word))return null;
  const decode=p=>p.toLowerCase().replace(/\bdot\b/g,'.').replace(/\bdash\b/g,'-').replace(/\bunderscore\b/g,'_').replace(/\bplus\b/g,'+').replace(/\s+/g,'');
  const candidate=parts.map(decode).join('@');
  return validEmail(candidate)?candidate:null;
@@ -13,7 +17,7 @@ export function spelledEmail(value){
 export async function recoverEmail(body,env=process.env,fetcher=fetch){
  let utterance=String(body.utterance||'').slice(0,1400);const previous=String(body.previous_email||'').slice(0,254);
  if(env.AUDIO_FALLBACK_ENABLED==='true'&&body.audio_supported===true&&previous&&previous!=='none'&&!previous.includes('{{')&&!validEmail(previous)&&![true,'true'].includes(body.audio_fallback_attempted))return {success:true,email_helper_status:'audio_required',audio_field:'email',recognition_problem:true,email_confirmed:false};
- const resume=['cancel','reschedule'].includes(body.existing_action)?'existing_request':[true,'true'].includes(body.upfront_intake)?'policy_hook':body.confirmation_method&&['Email','Text','Both','Phone','None'].includes(body.confirmation_method)?'policy_hook':'contact_confirmation';
+ const resume=['cancel','reschedule'].includes(body.existing_action)?'existing_request':[true,'true'].includes(body.previous_declined)?'contact_confirmation':[true,'true'].includes(body.upfront_intake)?'policy_hook':body.confirmation_method&&['Email','Text','Both','Phone','None'].includes(body.confirmation_method)?'policy_hook':'contact_confirmation';
  const result=(email,used=false,question='Please spell the part before the at sign, then the domain.')=>({success:true,email_confirmed:false,email_accepted:false,email_declined:false,customer_email:email||previous||'none',email_helper_status:email?'candidate':'clarify',email_candidate:email||'none',email_spoken:email?spokenEmail(email):'none',email_question:email?`I heard ${spokenEmail(email)}. Is that exactly right?`:question,email_resume_node:resume,email_model_used:used});
  // Literal, standalone email is unambiguous; do not run a model on ordinary input.
  if(validEmail(utterance.trim()))return result(utterance.trim());
