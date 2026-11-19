@@ -16,7 +16,8 @@ export function parseReceipt(email){
 export function receiptMatches(record,receipt){
  const i=record.input;const plain=receipt.plain;
  const received=Date.parse(receipt.received_at||'');if(!Number.isFinite(received)||received<Date.parse(record.created_at)-60000)return false;
- if(!plain.includes(String(i.vehicle_year))||!plain.replace(/[^a-z0-9]/g,'').includes(String(i.vehicle_model).toLowerCase().replace(/[^a-z0-9]/g,'')))return false;
+ const booked=i.scheduler_vehicle||{year:i.vehicle_year,model:i.vehicle_model};
+ if(!plain.includes(String(booked.year))||!plain.replace(/[^a-z0-9]/g,'').includes(String(booked.model).toLowerCase().replace(/[^a-z0-9]/g,'')))return false;
  const [year,month,day]=i.preferred_date.split('-').map(Number);const dates=[`${month}/${day}/${year}`,`${String(month).padStart(2,'0')}/${String(day).padStart(2,'0')}/${String(year).slice(2)}`,`${String(month).padStart(2,'0')}/${String(day).padStart(2,'0')}/${year}`];
  if(!dates.some(d=>plain.includes(d)))return false;
  const compact=x=>String(x).toLowerCase().replace(/[\s.]/g,'');if(!compact(plain).includes(compact(i.preferred_time))&&!(receipt.cancelled&&record.status==='cancelled'))return false;

@@ -41,7 +41,8 @@ export async function cancelOperation(operation,input){
   }
   const body=(await p.locator('body').innerText()).replace(/\s+/g,' ').toLowerCase();
   if(/your reservation has been canceled/.test(body)&&body.includes(r.appointment_id)){store.update(r,{status:'cancelled',cancel_status:'cancelled'});return {success:true,status:'cancelled',...publicRecord(r)};}
-  if(!body.includes(String(r.input.vehicle_year))||!body.includes(String(r.input.vehicle_model).toLowerCase()))return {success:false,status:'cancel_identity_unverified'};
+  const bookedVehicle=r.input.scheduler_vehicle||{year:r.input.vehicle_year,model:r.input.vehicle_model};
+  if(!body.includes(String(bookedVehicle.year))||!body.includes(String(bookedVehicle.model).toLowerCase()))return {success:false,status:'cancel_identity_unverified'};
   const ford=new URL(r.management_url).hostname==='www.guestxpui.ford.com';
   if(ford&&!body.includes(r.appointment_id))return {success:false,status:'cancel_identity_unverified'};
   if(!ford){const d=new Date(r.input.preferred_date+'T12:00:00Z');const date=d.toLocaleDateString('en-US',{month:'long',day:'2-digit',year:'numeric',timeZone:'UTC'}).toLowerCase();if(!body.includes(date))return {success:false,status:'cancel_identity_unverified'};}

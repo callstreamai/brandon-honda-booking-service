@@ -7,7 +7,7 @@ import {bookVoiceTest} from './voiceBooking.js';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
 import {watchReadRequests} from './readiness.js';
 import {parseTimeLabel} from './slots.js';
-import {nearestYears,equivalentModel,selectionNote,appointmentNotes} from './schedulerChoices.js';
+import {nearestYears,equivalentModel,selectionNote,appointmentNotes,readbackFields} from './schedulerChoices.js';
 import {isAuthorizedTestBooking,prepareTestReview,inspectTestBooking,commitTestBooking} from './testBooking.js';
 
 // Observed GuestXP controls, November 5, 2026. Never execute caller-provided selectors or URLs.
@@ -268,7 +268,7 @@ export async function operate(operation,input) {
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
     // The resolved date becomes authoritative for readback and the final booking request.
     s.fingerprint=inputFingerprint({...input,preferred_date:date});
-    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,scheduler_selection_note:s.selectionNote||'',booking_notes:s.appointmentNotes||input.booking_notes||'',verified_services:s.selectedServices,verified_transport:s.selectedTransport,verified_pickup_address:s.pickupAddress||null,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
+    return {...readbackFields(input,date),success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,scheduler_selection_note:s.selectionNote||'',booking_notes:s.appointmentNotes||input.booking_notes||'',verified_services:s.selectedServices,verified_transport:s.selectedTransport,verified_pickup_address:s.pickupAddress||null,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
     }
   } catch(e) {
     if(testOperation&&s&&(s.writeAttempted||s.contactSubmitted)){s.bookingStatus='unknown';return fail('booking_outcome_unknown','Do not retry submission. Verify the existing scheduler session or contact service.',{booking_status:'unknown'});}
