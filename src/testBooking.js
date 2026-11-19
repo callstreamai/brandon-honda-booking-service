@@ -28,6 +28,9 @@ export async function inspectTestBooking(s,{screenshot=false}={}){
   const page=s.page;
   if(page.isClosed())return {success:false,status:'booking_page_closed',booking_status:s.bookingStatus||'unknown'};
   const result={success:false,status:s.stage,booking_status:s.bookingStatus||'not_submitted',headings:await page.locator('h1,h2,h3').allTextContents(),buttons:await visibleButtons(page),screen_text:(await page.locator('body').innerText()).slice(0,18000),review_token:s.reviewToken||null};
+  result.review_phase=s.reviewPhase||null;
+  result.review_error=s.reviewError||null;
+  result.form_controls=await page.locator('input,textarea').evaluateAll(xs=>xs.map(x=>({tag:x.tagName,id:x.id,type:x.type,name:x.name,maxLength:x.maxLength,disabled:x.disabled,readOnly:x.readOnly})));
   if(screenshot)result.screenshot_base64=(await page.screenshot({fullPage:true})).toString('base64');
   return result;
 }
@@ -38,9 +41,11 @@ export async function prepareTestReview(s,input){
   if(await slot.count()!==1||!await slot.isEnabled())return {success:false,status:'selected_slot_unavailable'};
   s.stage='booking_review_preparing';
   try{
+    s.reviewPhase='select_slot';
     if(!await slot.isChecked())await slot.locator('xpath=ancestor::label[1]').click();
     if(!await slot.isChecked())throw new Error('Selected time was not applied');
     await p.getByRole('button',{name:'Continue',exact:true}).click();
+    s.reviewPhase='contact_heading';
     await p.getByRole('heading',{name:'Enter Your Information',exact:true}).waitFor();
     const words=String(input.customer_name).trim().split(/\s+/);const first=words.shift();const last=words.join(' ');
     // This endpoint is exclusively for the explicitly approved fictional test fixture.
@@ -59,11 +64,14 @@ export async function prepareTestReview(s,input){
     await p.getByLabel('Primary Phone (Mobile)',{exact:true}).fill(digits(input.caller_phone));
     await s.waitForReads();
     s.contactSubmitted=true;
+    s.reviewPhase='contact_continue';
     await p.getByRole('button',{name:'Continue',exact:true}).click();
     await s.waitForReads();
     s.stage='booking_review';
+    s.reviewPhase='summary_heading';
     await p.getByRole('heading',{name:'Reservation Summary',exact:true}).waitFor();
     const comments=p.locator('#additional-comments__textarea');
+    s.reviewPhase='comments';
     if(await comments.count()===1){
       const max=Number(await comments.getAttribute('maxlength'))||125;
       const note=[true,'true'].includes(input.completion_fallbacks)?'RPA TEST; '+(s.appointmentNotes||input.booking_notes||''):'RPA TEST BOOKING: fictional Ford vehicle. '+(input.booking_notes||'');
@@ -72,10 +80,12 @@ export async function prepareTestReview(s,input){
       s.savedAppointmentNotes=await comments.inputValue();
     }
     if(isValet(input)){
+      s.reviewPhase='valet_communication';
       if(input.confirmation_method!=='Phone')throw new Error('Valet requires caller-approved phone contact');
       const phone=p.locator('#communications-phone');await phone.fill(digits(input.caller_phone));
       if(digits(await phone.inputValue())!==digits(input.caller_phone))throw new Error('Valet communication phone mismatch');
     }else{
+    s.reviewPhase='communication';
     const both=p.getByRole('radio',{name:input.confirmation_method||'Both',exact:true});
     if(await both.count()===1){if(!await both.isChecked())await both.locator('xpath=ancestor::label[1]').click();if(!await both.isChecked())throw new Error('Communication preference not applied');}
     else throw new Error('Communication preference needs mapping');
@@ -85,8 +95,9 @@ export async function prepareTestReview(s,input){
     if(candidates.length===1){s.finalButton=candidates[0].name;s.reviewToken=crypto.randomUUID();snapshot.review_token=s.reviewToken;snapshot.status='booking_review_ready';}
     else snapshot.status='booking_review_needs_mapping';
     return snapshot;
-  }catch{
-    s.bookingStatus=s.contactSubmitted?'unknown':'not_submitted';
+  }catch(error){
+    s.reviewError=String(error.message||error).split('\n')[0].slice(0,300);
+    s.bookingStatus=s.writeAttempted?'unknown':'not_submitted';
     s.stage='booking_review_error';return await inspectTestBooking(s);
   }
 }
