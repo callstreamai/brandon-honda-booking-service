@@ -3,7 +3,7 @@ import {accountTypeFor} from './accountType.js';
 import {inputFingerprint} from './policy.js';
 import {allowedTestCaller,bookingStore,publicRecord,phoneDigits} from './bookingStore.js';
 import {prepareTestReview,commitTestBooking,inspectTestBooking} from './testBooking.js';
-export function bookingSpeech(i,id){if(!/^\d{6,20}$/.test(String(id)))throw Error('invalid_booking_id');const date=new Date(i.preferred_date+'T12:00:00Z'),day=date.getUTCDate(),suffix=day>=11&&day<=13?'th':({1:'st',2:'nd',3:'rd'}[day%10]||'th'),spoken=date.toLocaleDateString('en-US',{month:'long',timeZone:'UTC'})+' '+day+suffix;return `Ford confirmed your appointment for ${i.service_concern}, ${i.vehicle_year} ${i.vehicle_make} ${i.vehicle_model}, on ${spoken} at ${i.preferred_time} Pacific. Your reservation number is ${id}. Is there anything else I can help you with?`;}
+export function bookingSpeech(i,id){if(!/^\d{6,20}$/.test(String(id)))throw Error('invalid_booking_id');const date=new Date(i.preferred_date+'T12:00:00Z'),day=date.getUTCDate(),suffix=day>=11&&day<=13?'th':({1:'st',2:'nd',3:'rd'}[day%10]||'th'),spoken=date.toLocaleDateString('en-US',{month:'long',timeZone:'UTC'})+' '+day+suffix;return `Your appointment at Pierre Ford and Lincoln of Lynnwood is confirmed for ${i.service_concern} for your ${i.vehicle_year} ${i.vehicle_make} ${i.vehicle_model}, on ${spoken} at ${i.preferred_time} Pacific. Your reservation number is ${id}. Is there anything else I can help you with?`;}
 export function confirmationFromScreen(snapshot){
  const m=String(snapshot.screen_text||'').match(/Your reservation number is:\s*(\d{6,20})\b/i);
  return snapshot.headings?.some(x=>x.trim()==='Thank You!')&&m?m[1]:null;
