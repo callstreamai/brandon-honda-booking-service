@@ -15,7 +15,7 @@ export function schedulingDecision(i,policy){
  if(business&&!supplied(i.business_name))return ask('business_name','What business or fleet name should the appointment be under?');
  if(!business&&!supplied(i.customer_name))return ask('customer_name','May I have your first and last name?');
  if(!business&&String(i.customer_name).trim().split(/\s+/).length<2)return ask('customer_name','And your last name?');
- if(!/^1?\d{10}$/.test(String(i.caller_phone||'').replace(/\D/g,'')))return ask('caller_phone','Is the number you’re calling from the best number for your appointment?');
+ if(!yes(i.caller_phone_confirmed)||!/^1?\d{10}$/.test(String(i.caller_phone||'').replace(/\D/g,'')))return ask('caller_phone','Is the number you’re calling from the best number for your appointment?');
  const vehicle=['vehicle_year','vehicle_make','vehicle_model'].filter(k=>!supplied(i[k]));
  if(vehicle.length)return ask('vehicle_identity',vehicle.length===3?'What is the year, make, and model of your vehicle?':`What is the ${vehicle.map(k=>k.replace('vehicle_','')).join(' and ')} of your vehicle?`);
  if(!yes(i.email_confirmed)||(!validEmail(i.customer_email||'')&&!yes(i.email_declined)))return result(business?'business_email':'contact_email');
