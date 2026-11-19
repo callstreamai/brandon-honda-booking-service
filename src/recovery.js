@@ -37,11 +37,14 @@ export async function recover(body,env=process.env,fetchImpl=fetch){
     const v=body.state?.[key];if(v!=null&&(typeof v!=='string'||v.length>2000))throw new Error('invalid_state');input.state[key]=v??null;
   }
   input.state=normalizeResponseState(input.state);
-  if(input.scope==='vehicle_type'&&canonicalValue('vehicle_type',input.state.vehicle_type)&&! /wrong|instead|actually|different|change|not (?:gas|hybrid|diesel|electric)/i.test(input.utterance))return fuelRecoveryResult(input,{action:'resolved',fuel_candidate:input.state.vehicle_type});
+  const ambiguousFuelYes=input.scope==='vehicle_type'&&/^(?:yes|yeah|yep|sure|correct|right|okay|ok)[.!\s]*$/i.test(input.utterance.trim())&&/\bor\b|,/.test(input.last_question);
+  if(ambiguousFuelYes)input.state.vehicle_type=null;
+  if(!ambiguousFuelYes&&input.scope==='vehicle_type'&&canonicalValue('vehicle_type',input.state.vehicle_type)&&! /wrong|instead|actually|different|change|not (?:gas|hybrid|diesel|electric)/i.test(input.utterance))return fuelRecoveryResult(input,{action:'resolved',fuel_candidate:input.state.vehicle_type});
   const now=Date.now();for(const [key,val]of calls)if(now-val.at>1800000)calls.delete(key);
   let entry=calls.get(input.call_id);if(!entry){if(calls.size>=500)throw new Error('capacity');entry={at:now,count:0,cache:new Map(),busy:false};calls.set(input.call_id,entry);}
   const hash=crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex');
   if(input.scope==='vehicle_type'&&(entry.fuelCount||0)>=1)return fuelRecoveryResult(input,{action:'transfer',advice:'Fuel type remains unclear after one helper confirmation. Offer staff assistance without guessing or repeating fuel questions.',question:null,fuel_candidate:null});
+  if(ambiguousFuelYes){entry.fuelCount=1;return fuelRecoveryResult(input,{action:'clarify',fuel_candidate:'Gas',advice:'A yes to multiple fuel choices selects none. Confirm one candidate without treating it as fact.'});}
   if(input.scope==='account_type'&&(entry.accountCount||0)>=1)return recoveryResult(input,{action:'transfer',advice:'The account setup still needs service-team help after one clarification. Do not repeat the same account question or guess Individual.',question:null});
   if(entry.cache.has(hash))return entry.cache.get(hash);
   if(entry.busy||entry.count>=2)return recoveryResult(input,{action:'transfer',advice:'Recovery did not resolve the request. Staff help is needed.',question:null});
