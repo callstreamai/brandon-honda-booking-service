@@ -5,6 +5,16 @@ import {policyDecision} from '../src/policy.js';
 import {recoverEmail} from '../src/emailRecovery.js';
 const base={upfront_intake:true,customer_account_type:'individual',customer_name:'Isabelle Test',caller_phone:'2393822414',caller_phone_confirmed:true,vehicle_year:'2024',vehicle_make:'Lincoln',vehicle_model:'Aviator',vehicle_type:'Gas',vehicle_mileage:'unknown',earliest_requested:true};
 const next=i=>schedulingDecision(i,policyDecision(i));
+test('rejecting an email readback does not spend a model attempt',async()=>{
+ const env={EXTERNAL_RECOVERY_ENABLED:'true',OPENAI_API_KEY:'test',OPENAI_MODEL:'test'};let calls=0;
+ const fetcher=async()=>{calls++;return {ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({candidate:'bilma@callstreamai.com',question:''})}]}]})}};
+ const b={call_id:'rejected-readback',upfront_intake:true};
+ await recoverEmail({...b,utterance:'Bilma at alpha drive ai dot com'},env,fetcher);
+ for(const utterance of ["No, that's wrong.",'No.','No, that is not correct.']){const r=await recoverEmail({...b,utterance},env,fetcher);assert.equal(r.email_helper_status,'clarify');}
+ assert.equal(calls,1);
+ const r=await recoverEmail({...b,utterance:'b i l m a at call stream ai dot com'},env,fetcher);
+ assert.equal(r.customer_email,'bilma@callstreamai.com');assert.equal(r.email_confirmed,false);assert.equal(calls,2);
+});
 test('caller ID alone is not a confirmed appointment contact number',()=>{assert.equal(next({...base,caller_phone_confirmed:false}).intake_field,'caller_phone');});
 test('actual split name does not invoke recovery or discard the first name',()=>{const first={upfront_intake:true,customer_account_type:'individual',customer_name:'Isabelle'};assert.deepEqual(next(first),{next_step:'contact_name',step_question:'And your last name?',intake_field:'customer_name'});assert.equal(next({...first,customer_name:'Isabelle Test'}).intake_field,'caller_phone');});
 test('email is upstream of service and valet despite volunteered service/address',()=>{const i={...base,service_concern:'AC blowing hot and brakes squeaking',transport_option:'pickup',pickup_address:'19100 4th Ave W, Lynnwood WA 98036'};assert.equal(next(i).next_step,'contact_email');assert.equal(next({...i,customer_email:'bilma@alphadriveai.com',email_confirmed:true}).next_step,'contact_confirmation');assert.equal(next({...i,email_declined:true,email_confirmed:true,confirmation_method:'Text'}).next_step,'valet_details');});
