@@ -3,7 +3,7 @@ export const spokenEmail=x=>String(x).split('').map(c=>({'@':' at ','.':' dot ',
 const attempts=new Map();
 export async function recoverEmail(body,env=process.env,fetcher=fetch){
  const utterance=String(body.utterance||'').slice(0,1400),previous=String(body.previous_email||'').slice(0,254);
- if(env.AUDIO_FALLBACK_ENABLED==='true'&&previous&&previous!=='none'&&!previous.includes('{{')&&!validEmail(previous)&&![true,'true'].includes(body.audio_fallback_attempted))return {success:true,email_helper_status:'audio_required',audio_field:'email',recognition_problem:true,email_confirmed:false};
+ if(env.AUDIO_FALLBACK_ENABLED==='true'&&body.audio_supported===true&&previous&&previous!=='none'&&!previous.includes('{{')&&!validEmail(previous)&&![true,'true'].includes(body.audio_fallback_attempted))return {success:true,email_helper_status:'audio_required',audio_field:'email',recognition_problem:true,email_confirmed:false};
  const resume=['cancel','reschedule'].includes(body.existing_action)?'existing_request':body.confirmation_method&&['Email','Text','Both','Phone','None'].includes(body.confirmation_method)?'policy_hook':'contact_confirmation';
  const result=(email,used=false,question='Please spell the part before the at sign, then the domain.')=>({success:true,email_helper_status:email?'candidate':'clarify',email_candidate:email||'none',email_spoken:email?spokenEmail(email):'none',email_question:email?`I heard ${spokenEmail(email)}. Is that exactly right?`:question,email_resume_node:resume,email_model_used:used});
  // Literal, standalone email is unambiguous; do not run a model on ordinary input.
