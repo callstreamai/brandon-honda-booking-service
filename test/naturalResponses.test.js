@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import {normalizeResponseState,canonicalValue} from '../src/responseValues.js';
 import {recoverPathway} from '../src/pathwayRecovery.js';
 import {recover} from '../src/recovery.js';
+test('a changed service may be a literal span of the cited caller sentence',async()=>{
+ const env={EXTERNAL_RECOVERY_ENABLED:'true',OPENAI_API_KEY:'test',OPENAI_MODEL:'test'};
+ const fetcher=async()=>({ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({resume_node:'policy_hook',advice:'Caller replaced the request.',question:null,interpretations:[{field:'service_concern',value:'oil change',evidence:'Just schedule an oil change instead.'}]})}]}]})});
+ const r=await recoverPathway({call_id:'literal-service-correction',upfront_intake:true,source_node:'service_exception_handoff',utterance:'No thanks. Just schedule an oil change instead.',state:{service_concern:'AC blows hot and brakes squeak',vehicle_model:'Aviator',customer_email:'bilma@example.com'}},env,fetcher);
+ assert.equal(r.recovery_status,'resume');assert.equal(r.recovery_values.service_concern,'oil change');assert.equal(r.recovery_values.vehicle_model,'Aviator');
+});
 test('bare yes to a fuel list cannot confirm a hallucinated extracted Hybrid',async()=>{
  const b={call_id:'bare-yes-list',scope:'vehicle_type',utterance:'Yes.',last_question:'Is it gas or hybrid?',state:{vehicle_type:'Hybrid',vehicle_model:'Maverick'}};
  const r=await recover(b,{},()=>{throw Error('model not required');});assert.equal(r.recovery_action,'clarify');assert.equal(r.recovered_state.vehicle_type,null);assert.equal(r.recovered_state.vehicle_model,'Maverick');
