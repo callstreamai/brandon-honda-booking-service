@@ -1,10 +1,29 @@
-const targets=['prewarm_session','account_type','business_name','contact_name','account_phone','vehicle_year','fuel_type','contact_email','business_email','contact_confirmation','vehicle_mileage','service_need','policy_hook','policy_clarify','transport_option','date_preference','no_availability','offer_times','readback','existing_request','prepare_change_request','change_request_readback','valet_details','prepare_valet_readback','valet_address_confirm','end_change_request_sent','booking_confirmed','pathway_recovery_help'];
+import {validEmail} from './emailRecovery.js';
+const targets=['prewarm_session','account_type','business_name','contact_name','account_phone','vehicle_year','fuel_type','contact_email','business_email','contact_confirmation','vehicle_mileage','prepare_hook','service_need','policy_hook','policy_clarify','transport_option','date_preference','no_availability','offer_times','readback','existing_request','prepare_change_request','change_request_readback','valet_details','prepare_valet_readback','valet_address_confirm','end_change_request_sent','booking_confirmed','pathway_recovery_help'];
 const calls=new Map();
 const blank=v=>v==null||['','none','null','unknown','undefined'].includes(String(v).trim().toLowerCase())||String(v).includes('{{');
 const yes=v=>v===true||v==='true';
 const validPhone=v=>/^1?\d{10}$/.test(String(v||'').replace(/\D/g,''));
 const dangerous=s=>/unknown|timeout|unhandled|pending/i.test(String(s.booking_status||''));
 const fields=['customer_account_type','business_name','customer_name','caller_phone','customer_email','email_confirmed','vehicle_year','vehicle_make','vehicle_model','vehicle_type','vehicle_mileage','service_concern','service_labels','service_complete','transport_option','preferred_date','preferred_time','earliest_requested','sms_consent','confirmation_method','pickup_address','pickup_access','vehicle_operable','pickup_address_confirmed','valet_review_fingerprint','existing_action','existing_appointment','appointment_id','requested_change','request_notes','change_email_status','change_request_fingerprint','request_confirmed','request_abandoned','readback_confirmed','booking_status'];
+export function knownFieldResume(source,s){
+ if(['cancel','reschedule'].includes(s.existing_action)||dangerous(s)||['booked','booking_confirmed','confirmed'].includes(s.booking_status))return null;
+ const fuel=['Gas','Hybrid','Diesel','Electric'].includes(s.vehicle_type);
+ const map={
+  contact_name:!blank(s.customer_name)&&String(s.customer_name).trim().split(/\s+/).length>=2?'account_phone':null,
+  account_phone:validPhone(s.caller_phone)?'vehicle_year':null,
+  vehicle_year:/^\d{4}$/.test(String(s.vehicle_year||''))&&['vehicle_make','vehicle_model'].every(k=>!blank(s[k]))?(fuel?'contact_email':'fuel_type'):null,
+  fuel_type:fuel?'contact_email':null,
+  contact_email:yes(s.email_confirmed)&&validEmail(s.customer_email||'')?'contact_confirmation':null,
+  business_email:yes(s.email_confirmed)&&validEmail(s.customer_email||'')?'contact_confirmation':null,
+  contact_confirmation:['Text','Email','Both','None','Phone'].includes(s.confirmation_method)?'vehicle_mileage':null,
+  vehicle_mileage:(!blank(s.vehicle_mileage)||s.vehicle_mileage==='unknown')?'prepare_hook':null,
+  service_need:yes(s.service_complete)&&!blank(s.service_labels)?'policy_hook':null,
+  transport_option:['dropoff','wait','pickup'].includes(s.transport_option)?'policy_hook':null,
+  date_preference:(/^\d{4}-\d{2}-\d{2}$/.test(String(s.preferred_date||''))||yes(s.earliest_requested))?'policy_hook':null
+ };
+ return map[source]||null;
+}
 export function pathwayRecoveryResult(body,result){
  if(!result||!targets.includes(result.resume_node)||typeof result.advice!=='string'||result.advice.length>1200||!(result.question===null||typeof result.question==='string'&&result.question.length<=300))throw Error('invalid_recovery_result');
  const s=body.state||{},source=body.source_node;let target=result.resume_node;
@@ -34,6 +53,11 @@ export async function recoverPathway(body,env=process.env,fetcher=fetch){
  const now=Date.now();for(const [k,v]of calls)if(now-v.at>1800000)calls.delete(k);
  let entry=calls.get(body.call_id);if(!entry){if(calls.size>=500)return safe('Recovery is temporarily unavailable. Offer help without losing the request.');entry={at:now,total:0,stages:{},busy:false};calls.set(body.call_id,entry);}
  const stage=input.source_node;if(entry.busy||entry.total>=6||(entry.stages[stage]||0)>=2)return safe('Recovery has not resolved this step. Offer staff help without asking the same question again.');
+ const knownTarget=knownFieldResume(stage,input.state);
+ if(knownTarget&&!/wrong|correct|change|instead|actually|different|not that/i.test(input.utterance+' '+input.reason)){
+  entry.total++;entry.stages[stage]=(entry.stages[stage]||0)+1;
+  return pathwayRecoveryResult(input,{resume_node:knownTarget,advice:'This step is already satisfied by captured information. Continue to the next step and ask only a genuinely missing detail. Preserve all customer data and permissions.',question:null});
+ }
  if(env.EXTERNAL_RECOVERY_ENABLED!=='true'||!env.OPENAI_API_KEY||!env.OPENAI_MODEL)return safe('The helper is unavailable. Offer staff help; preserve all supplied information.');
  entry.total++;entry.stages[stage]=(entry.stages[stage]||0)+1;entry.busy=true;
  const modelInput=JSON.parse(JSON.stringify(input));
