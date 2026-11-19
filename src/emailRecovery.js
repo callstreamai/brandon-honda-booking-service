@@ -11,7 +11,7 @@ export async function recoverEmail(body,env=process.env,fetcher=fetch){
  const now=Date.now();for(const [k,v]of attempts)if(now-v.at>1800000)attempts.delete(k);
  const key=String(body.call_id||'');const n=attempts.get(key)||{n:0,at:now};
  if([true,'true'].includes(body.upfront_intake)){
-  if(/^(no|nope|not right|incorrect)[.!]?$/i.test(utterance.trim()))return result(null,false,'Which part should I correct: before the at sign, or the domain after it?');
+  if(/^(?:no|nope)(?:[,\s]+(?:that(?:'s| is)|it(?:'s| is)))?(?:[,\s]+(?:not right|not correct|wrong|incorrect))?[.!]?$/i.test(utterance.trim())||/^(?:not right|incorrect)[.!]?$/i.test(utterance.trim()))return result(null,false,'Which part should I correct: before the at sign, or the domain after it?');
   if(n.partial&&!/\bat\b|@/i.test(utterance)&&utterance.trim().split(/\s+/).length<12)utterance=n.partial+' '+utterance;
   if(/\bdot[.\s]*$/i.test(utterance)&&/\bat\b|@/i.test(utterance)){
    n.partial=utterance;attempts.set(key,n);return result(null,false,'What comes after the final dot?');
