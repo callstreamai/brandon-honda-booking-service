@@ -22,3 +22,10 @@ test('OpenAI interpretation must cite caller evidence and cannot write permissio
  const mock=async()=>({ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({resume_node:'policy_hook',advice:'Caller will wait.',question:null,interpretations:[{field:'transport_option',value:'wait',evidence:'hang around the lounge until it is done'}]})}]}]})});
  const r=await recoverPathway(b,env,mock);assert.equal(r.recovery_values.transport_option,'wait');assert.equal(r.recovery_values.customer_name,'Vince');assert.equal(r.readback_confirmed,undefined);assert.equal(b.state.readback_confirmed,false);
 });
+test('unquoted interpretation and permission injection are rejected',async()=>{
+ for(const [i,item]of [{field:'vehicle_type',value:'Gas',evidence:'gasoline'}, {field:'readback_confirmed',value:'true',evidence:'yes please'}].entries()){
+  const mock=async()=>({ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({resume_node:'policy_hook',advice:'Continue.',question:null,interpretations:[item]})}]}]})});
+  const r=await recoverPathway({call_id:'reject-interpretation-'+i,source_node:'fuel_type',utterance:'yes please',state:{readback_confirmed:false}}, {EXTERNAL_RECOVERY_ENABLED:'true',OPENAI_API_KEY:'fake',OPENAI_MODEL:'fake'},mock);
+  assert.equal(r.recovery_status,'help_offered');assert.equal(r.readback_confirmed,undefined);assert.equal(r.recovery_values.vehicle_type,null);
+ }
+});
