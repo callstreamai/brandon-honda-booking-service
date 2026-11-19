@@ -41,7 +41,15 @@ test('known callback advances without an LLM and preserves details and permissio
  const body={call_id:'known-phone-fast',source_node:'account_phone',utterance:'I already told you the calling number is best',state:structuredClone(state)};
  const before=structuredClone(body);
  const r=await recoverPathway(body,{},async()=>{throw Error('must not call model')});
- assert.equal(r.recovery_resume_node,'vehicle_year');assert.deepEqual(body,before);assert.equal(r.caller_phone,undefined);assert.equal(r.readback_confirmed,undefined);
+ assert.equal(r.recovery_resume_node,'contact_confirmation');assert.deepEqual(body,before);assert.equal(r.caller_phone,undefined);assert.equal(r.readback_confirmed,undefined);
+});
+test('recovery skips every known intake field but stops before tools and never grants consent',async()=>{
+ const s={...state,confirmation_method:'both',vehicle_mileage:'25000'};
+ const r=await recoverPathway({call_id:'known-chain',source_node:'account_phone',utterance:'I already answered that twice',state:s},{},async()=>{throw Error('must not call model')});
+ assert.equal(r.recovery_resume_node,'prepare_hook');assert.equal(r.readback_confirmed,undefined);assert.equal(r.request_confirmed,undefined);
+ const missing={...s,vehicle_type:null};
+ const m=await recoverPathway({call_id:'missing-fuel-chain',source_node:'account_phone',utterance:'I already answered that twice',state:missing},{},async()=>{throw Error('must not call model')});
+ assert.equal(m.recovery_resume_node,'fuel_type');
 });
 test('correction cannot bypass interpretation using stale known data',async()=>{
  const r=await recoverPathway({call_id:'known-phone-correct',source_node:'account_phone',utterance:'Actually that is the wrong phone number',state},{},async()=>{throw Error('offline')});
