@@ -28,11 +28,22 @@ test('unknown writes cannot retry and direct write/transfer targets are rejected
 test('model input is redacted, output bounded and repeated recovery offers help',async()=>{
  let count=0;const env={EXTERNAL_RECOVERY_ENABLED:'true',OPENAI_API_KEY:'fake',OPENAI_MODEL:'fake'};
  const fetcher=async(u,o)=>{count++;const p=JSON.parse(o.body);assert.equal(p.store,false);assert.ok(!p.input.includes('4102790548'));assert.equal(JSON.parse(p.input).state.vehicle_model,'Maverick');return {ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(advice('transport_option'))}]}]})};};
- const b={call_id:'whole-recovery-unit',source_node:'transport_option',utterance:'I already told you drop off',state:structuredClone(state)};
+ const b={call_id:'whole-recovery-unit',source_node:'transport_option',utterance:'That is wrong; I already told you drop off',state:structuredClone(state)};
  assert.equal((await recoverPathway(b,env,fetcher)).recovery_resume_node,'policy_hook');await recoverPathway(b,env,fetcher);
  assert.equal((await recoverPathway(b,env,fetcher)).recovery_resume_node,'pathway_recovery_help');assert.equal(count,2);assert.deepEqual(b.state,state);
 });
 test('model failure never clears data or grants permission',async()=>{
  const r=await recoverPathway({call_id:'whole-error',source_node:'readback',utterance:'That is still wrong',state},{EXTERNAL_RECOVERY_ENABLED:'true',OPENAI_API_KEY:'fake',OPENAI_MODEL:'fake'},async()=>{throw Error('offline')});
  assert.equal(r.recovery_resume_node,'pathway_recovery_help');assert.equal(r.readback_confirmed,undefined);assert.equal(r.recovered_state,undefined);
+});
+
+test('known callback advances without an LLM and preserves details and permissions',async()=>{
+ const body={call_id:'known-phone-fast',source_node:'account_phone',utterance:'I already told you the calling number is best',state:structuredClone(state)};
+ const before=structuredClone(body);
+ const r=await recoverPathway(body,{},async()=>{throw Error('must not call model')});
+ assert.equal(r.recovery_resume_node,'vehicle_year');assert.deepEqual(body,before);assert.equal(r.caller_phone,undefined);assert.equal(r.readback_confirmed,undefined);
+});
+test('correction cannot bypass interpretation using stale known data',async()=>{
+ const r=await recoverPathway({call_id:'known-phone-correct',source_node:'account_phone',utterance:'Actually that is the wrong phone number',state},{},async()=>{throw Error('offline')});
+ assert.equal(r.recovery_resume_node,'pathway_recovery_help');
 });
