@@ -236,7 +236,7 @@ export async function operate(operation,input) {
     if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu,verified_account_type:s.accountType,next_step:input.service_concern?'policy_hook':'service_need'};
     if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(['service_choice_required','service_clarification_required','service_staff_required'].includes(result.status)){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
-    const earliest=input.preferred_date==='earliest'||[true,'true'].includes(input.earliest_requested);
+    const earliest=input.preferred_date==='earliest'||(!/^\d{4}-\d{2}-\d{2}$/.test(String(input.preferred_date||''))&&[true,'true'].includes(input.earliest_requested));
     let date=earliest?new Intl.DateTimeFormat('en-CA',{timeZone:dealer.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()):input.preferred_date;
     const nextDay=d=>new Date(new Date(d+'T12:00:00Z').getTime()+86400000).toISOString().slice(0,10);
     if(earliest)while(!isServiceDate(date))date=nextDay(date);

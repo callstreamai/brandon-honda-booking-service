@@ -1,9 +1,11 @@
 import {inputFingerprint,policyDecision,isServiceDate} from './policy.js';
+import {readbackFields} from './schedulerChoices.js';
 import {normalizeResponseState} from './responseValues.js';
 const yes=v=>v===true||v==='true';
 export function searchInput(input){
  const out=normalizeResponseState(input);
  if(yes(out.anticipatory_availability)&&!out.preferred_date)out.earliest_requested=true;
+ if(yes(out.completion_fallbacks)&&/^\d{4}-\d{2}-\d{2}$/.test(String(out.preferred_date||'')))out.earliest_requested=false;
  return out;
 }
 export function canPrefetch(input){
@@ -31,7 +33,7 @@ export function createAvailabilityPrefetch(run,{now=Date.now,ttlMs=90000,capacit
  }
  return {
   start(input){if(!canPrefetch(searchInput(input)))return {status:'not_started'};const job=start(input);return {status:job?(job.finished!==null?'ready':'searching'):'capacity'};},
-  async consume(input){const prior=jobs.get(input.call_id);const job=start(input);if(!job)return {success:false,status:'capacity'};const t=now();const result=await job.promise;if(jobs.get(input.call_id)!==job)return {success:false,status:'availability_superseded',available_slots:[]};return {...result,prefetch_used:prior===job,prefetch_wait_ms:now()-t,prefetch_total_ms:job.finished-job.started};},
+  async consume(input){const prior=jobs.get(input.call_id);const job=start(input);if(!job)return {success:false,status:'capacity'};const t=now();const result=await job.promise;if(jobs.get(input.call_id)!==job)return {success:false,status:'availability_superseded',available_slots:[]};return {...result,...(yes(input.completion_fallbacks)&&result.success&&/^\d{4}-\d{2}-\d{2}$/.test(String(result.preferred_date||''))?readbackFields(input,result.preferred_date):{}),prefetch_used:prior===job,prefetch_wait_ms:now()-t,prefetch_total_ms:job.finished-job.started};},
   async close(id){const job=jobs.get(id);if(job)await job.promise;jobs.delete(id);},
   size(){prune();return jobs.size;}
  };

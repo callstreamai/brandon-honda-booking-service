@@ -18,3 +18,9 @@ test('word followed by its spelling must not silently duplicate the email domain
  assert.equal(spelledEmail('No. It is v I n c e at alpha a l p h a Drive d r I v e a I dot com.'),null);
  assert.equal(spelledEmail('v I n c e at a l p h a d r I v e a I dot com.'),'vince@alphadriveai.com');
 });
+
+test('conversational email framing is handled by the contextual helper, not concatenated',()=>{
+ assert.equal(spelledEmail('I changed my mind about email. Use vince at callstreamai dot com and send both text and email updates.'),null);
+ assert.equal(spelledEmail('No, it is vince at callstreamai dot com.'),'vince@callstreamai.com');
+ assert.equal(spelledEmail('v i n c e at c a l l s t r e a m a i dot com'),'vince@callstreamai.com');
+});

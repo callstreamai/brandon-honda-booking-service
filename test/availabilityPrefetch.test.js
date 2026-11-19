@@ -45,3 +45,11 @@ test('new intake order progresses and preserves existing email preferences',()=>
  assert.equal(nextSchedulingStep(searchInput(base),policy),'contact_email');
  assert.equal(nextSchedulingStep(searchInput({...base,customer_email:'test@example.com',confirmation_method:'Both'}),policy),'availability_check');
 });
+
+test('specific day wins over earliest-that-day and cached availability uses corrected identity',async()=>{
+ const input={...base,completion_fallbacks:true,preferred_date:'2026-11-27',earliest_requested:true};
+ assert.equal(searchInput(input).earliest_requested,false);
+ let count=0;const p=createAvailabilityPrefetch(async()=>{count++;return {success:true,status:'availability_found',preferred_date:'2026-11-27',available_slots:['9:00 a.m.'],booking_customer_name:'Old Name',contact_readback:'Old phone'};});
+ await p.consume(input);const r=await p.consume({...input,customer_name:'Isabel Task',caller_phone:'4102790555'});
+ assert.equal(count,1);assert.equal(r.booking_customer_name,'Isabel Task');assert.match(r.contact_readback,/410-279-0555/);assert.deepEqual(r.available_slots,['9:00 a.m.']);
+});
