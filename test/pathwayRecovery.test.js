@@ -55,3 +55,8 @@ test('correction cannot bypass interpretation using stale known data',async()=>{
  const r=await recoverPathway({call_id:'known-phone-correct',source_node:'account_phone',utterance:'Actually that is the wrong phone number',state},{},async()=>{throw Error('offline')});
  assert.equal(r.recovery_resume_node,'pathway_recovery_help');
 });
+test('upfront ambiguous answer speaks the helper clarification instead of discarding it at policy',async()=>{
+ const question='Do you mean it uses regular gasoline, or are you unsure?';
+ const r=await recoverPathway({call_id:'clarification-owned-once',source_node:'contact_name',upfront_intake:true,utterance:'Let have a guess',state:{...state,vehicle_type:null}},{EXTERNAL_RECOVERY_ENABLED:'true',OPENAI_API_KEY:'fake',OPENAI_MODEL:'fake'},async()=>({ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({resume_node:'contact_name',advice:'Clarify only fuel.',question,interpretations:[]})}]}]})}));
+ assert.equal(r.recovery_resume_node,'contact_name');assert.equal(r.recovery_question,question);assert.equal(r.recovery_values.vehicle_type,null);assert.equal(r.recovery_values.vehicle_model,'Maverick');
+});
