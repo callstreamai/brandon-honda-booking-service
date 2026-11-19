@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import {dealer,policyDecision,normalizeTransport} from './policy.js';
 import {operate,shutdown,browserStats} from './fordDriver.js';
 import {recover} from './recovery.js';
-import {normalizeResponseState} from './responseValues.js';
+import {normalizeResponseState,completionDefaults} from './responseValues.js';
 import {createAvailabilityPrefetch,searchInput} from './availabilityPrefetch.js';
 import {confirmedEmailState} from './emailConfirmation.js';
 const availabilityPrefetch=createAvailabilityPrefetch(operate);
@@ -31,7 +31,7 @@ const server=http.createServer(async(req,res)=>{
     for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>(req.url==='/speech/test'&&process.env.AUDIO_TEST_ENABLED==='true'?2000000:32768)){send(413,{success:false,status:'too_large'});return;}}
     const input=scrub(JSON.parse(raw));if(!input||Array.isArray(input)||typeof input!=='object')return send(400,{success:false,status:'invalid_body'});
     input.transport_option=normalizeTransport(input.transport_option);
-    Object.assign(input,normalizeResponseState(input));
+    Object.assign(input,completionDefaults(input));
     Object.assign(input,searchInput(input));
     Object.assign(input,confirmedEmailState(input));
     if(input.state)input.state=normalizeResponseState(input.state);
@@ -48,7 +48,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.url==='/appointments/lookup'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const rows=bookingStore().active(input.caller_phone);return send(200,{success:true,status:rows.length?'appointment_found':'no_appointment',appointments:rows.map(publicRecord)});}
     if(req.url==='/profile/lookup')return send(200,await lookupProfile(input));
     if(req.url==='/valet/review')return send(200,valetReview(input));
-    if(req.url==='/policy'){const policy=policyDecision(input);const step=[true,'true'].includes(input.upfront_intake)?schedulingDecision(input,policy):{next_step:nextSchedulingStep(input,policy)};const prefetch=step.next_step==='availability_check'||![true,'true'].includes(input.upfront_intake)?availabilityPrefetch.start(input):{status:'not_started'};return send(200,{success:true,policy,...step,customer_email:input.customer_email??null,email_confirmed:input.email_confirmed??false,transport_option:input.transport_option,earliest_requested:input.earliest_requested||false,prefetch_status:prefetch.status,available_slots:[],preferred_time:'none',readback_confirmed:false});}
+    if(req.url==='/policy'){const policy=policyDecision(input);const step=[true,'true'].includes(input.upfront_intake)?schedulingDecision(input,policy):{next_step:nextSchedulingStep(input,policy)};const prefetch=step.next_step==='availability_check'||![true,'true'].includes(input.upfront_intake)?availabilityPrefetch.start(input):{status:'not_started'};return send(200,{success:true,policy,...step,vehicle_type:input.vehicle_type??null,fuel_defaulted:input.fuel_defaulted??false,caller_phone:input.caller_phone??null,customer_email:input.customer_email??null,email_confirmed:input.email_confirmed??false,transport_option:input.transport_option,earliest_requested:input.earliest_requested||false,prefetch_status:prefetch.status,available_slots:[],preferred_time:'none',readback_confirmed:false});}
     if(req.url==='/availability'&&[true,'true'].includes(input.anticipatory_availability))return send(200,await availabilityPrefetch.consume(input));
     if(req.url==='/sessions/close')await availabilityPrefetch.close(input.call_id);
     const result=req.url==='/conversation/help'?await recover(input):await operate(paths[req.url],input);

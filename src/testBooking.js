@@ -64,7 +64,13 @@ export async function prepareTestReview(s,input){
     s.stage='booking_review';
     await p.getByRole('heading',{name:'Reservation Summary',exact:true}).waitFor();
     const comments=p.locator('#additional-comments__textarea');
-    if(await comments.count()===1){const max=Number(await comments.getAttribute('maxlength'))||125;await comments.fill(('RPA TEST BOOKING: fictional Ford vehicle. '+(input.booking_notes||'')).slice(0,max));}
+    if(await comments.count()===1){
+      const max=Number(await comments.getAttribute('maxlength'))||125;
+      const note=[true,'true'].includes(input.completion_fallbacks)?'RPA TEST; '+(s.appointmentNotes||input.booking_notes||''):'RPA TEST BOOKING: fictional Ford vehicle. '+(input.booking_notes||'');
+      // Actual vehicle and requested work precede optional default metadata.
+      await comments.fill(note.slice(0,max));
+      s.savedAppointmentNotes=await comments.inputValue();
+    }
     if(isValet(input)){
       if(input.confirmation_method!=='Phone')throw new Error('Valet requires caller-approved phone contact');
       const phone=p.locator('#communications-phone');await phone.fill(digits(input.caller_phone));

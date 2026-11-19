@@ -43,7 +43,15 @@ export async function bookVoiceTest(s,input){
  const review=await prepareTestReview(s,input);
  if(review.status!=='booking_review_ready')return {success:false,status:review.booking_status==='unknown'?'booking_outcome_unknown':'review_incomplete'};
  // The matching calendar session, exact slot selection and visible summary all precede the durable write guard.
- if(!reviewMatches(input,s.selectedServices,review.screen_text))return {success:false,status:'review_mismatch'};
+ const completion=[true,'true'].includes(input.completion_fallbacks);
+ const reviewInput=completion&&s.selectedVehicle?{...input,vehicle_make:s.selectedVehicle.make,vehicle_year:s.selectedVehicle.year,vehicle_model:s.selectedVehicle.model,vehicle_type:s.selectedVehicle.type}:input;
+ if(!reviewMatches(reviewInput,s.selectedServices,review.screen_text))return {success:false,status:'review_mismatch'};
+ if(completion){
+   input.scheduler_vehicle=s.selectedVehicle;input.scheduler_services=s.selectedServices;
+   input.booking_notes=s.appointmentNotes||input.booking_notes;input.saved_appointment_notes=s.savedAppointmentNotes;
+   const actual=[input.vehicle_year,input.vehicle_make,input.vehicle_model].join(' ');
+   if(!String(s.savedAppointmentNotes||'').includes(actual))return {success:false,status:'actual_vehicle_notes_required'};
+ }
  record=store.reserve(input); // fsync before final Schedule, even if the browser/network subsequently fails.
  const result=await commitTestBooking(s,{...input,review_token:review.review_token});
  const appointmentId=confirmationFromScreen(result);

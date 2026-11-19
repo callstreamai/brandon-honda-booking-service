@@ -7,6 +7,7 @@ import {bookVoiceTest} from './voiceBooking.js';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
 import {watchReadRequests} from './readiness.js';
 import {parseTimeLabel} from './slots.js';
+import {nearestYears,equivalentModel,selectionNote,appointmentNotes} from './schedulerChoices.js';
 import {isAuthorizedTestBooking,prepareTestReview,inspectTestBooking,commitTestBooking} from './testBooking.js';
 
 // Observed GuestXP controls, November 5, 2026. Never execute caller-provided selectors or URLs.
@@ -27,10 +28,10 @@ async function selectLabeled(input) {
 }
 setInterval(()=>{for(const [key,p]of preparations)if(Date.now()-p.at>idleMs)preparations.delete(key); for(const [key,s] of sessions) if(Date.now()-s.touched>idleMs && !s.busy){sessions.delete(key);void close(s);} },60000).unref();
 
-async function choose(select, value) {
+async function choose(select, value, settled=false) {
   const escaped=String(value).trim().replace(/[\s-]/g,'').split('').map(c=>c.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('[\\s-]*');
   const wanted=select.locator('option').filter({hasText:new RegExp('^'+escaped+'$','i')});
-  try {await wanted.first().waitFor({state:'attached',timeout:12000});}catch{}
+  if(!settled)try {await wanted.first().waitFor({state:'attached',timeout:12000});}catch{}
   const options=(await select.locator('option').allTextContents()).map(x=>x.trim());
   const normalized=x=>String(x).toLowerCase().replace(/[\s-]/g,'');
   const match=options.filter(x=>normalized(x)===normalized(value));
@@ -65,7 +66,30 @@ async function newSession(input) {
     for(const [field,label] of [['vehicle_make','Make'],['vehicle_year','Year'],['vehicle_model','Model'],['vehicle_type','Vehicle Type']]){
       s.stage=field;
       if(!input[field]) {await close(s);return fail('vehicle_details_required',`Please provide ${label}.`,{missing_field:field});}
-      const result=await choose(page.getByLabel(label,{exact:true}),input[field]);
+      const completion=[true,'true'].includes(input.completion_fallbacks);
+      await s.waitForReads();
+      let result=await choose(page.getByLabel(label,{exact:true}),input[field],completion);
+      if(result&&completion&&field==='vehicle_year'){
+        const year=nearestYears(input.vehicle_year,result.choices)[0];
+        if(year){result=await choose(page.getByLabel(label,{exact:true}),year,true);await s.waitForReads();}
+      }
+      if(result&&completion&&field==='vehicle_model'){
+        const model=equivalentModel(input.vehicle_model,result.choices);
+        if(model)result=await choose(page.getByLabel(label,{exact:true}),model,true);
+        else {
+          const years=(await page.getByLabel('Year',{exact:true}).locator('option').allTextContents()).map(x=>x.trim());
+          for(const year of nearestYears(input.vehicle_year,years)){
+            await choose(page.getByLabel('Year',{exact:true}),year,true);await s.waitForReads();
+            const choices=(await page.getByLabel('Model',{exact:true}).locator('option').allTextContents()).map(x=>x.trim());
+            const matched=equivalentModel(input.vehicle_model,choices);
+            if(matched){result=await choose(page.getByLabel('Model',{exact:true}),matched,true);break;}
+          }
+        }
+      }
+      if(result&&completion&&field==='vehicle_type'&&[true,'true'].includes(input.fuel_defaulted)){
+        const choices=result.choices.filter(x=>/^(Gas|Hybrid|Diesel|Electric)$/.test(x));
+        if(choices.length===1)result=await choose(page.getByLabel(label,{exact:true}),choices[0],true);
+      }
       if(result){await close(s);return fail('vehicle_choice_required',`The supplied ${label} is not listed for this vehicle selection.`,{missing_field:field,choices:result.choices,adapter_question:`I have ${input.vehicle_year} ${input.vehicle_make} ${input.vehicle_model}. The online scheduler does not list that ${label.toLowerCase()} for this selection. Would you like me to connect you with Service to arrange the appointment?`});}
     }
     s.selectedVehicle={};
@@ -114,6 +138,10 @@ async function atCalendar(s,input,decision) {
   input.service_labels=labels.join('|');
   s.fingerprint=inputFingerprint(input);
   s.selectedServices=[...labels];
+  if([true,'true'].includes(input.completion_fallbacks)){
+    s.selectionNote=selectionNote(input,s.selectedVehicle,labels);
+    s.appointmentNotes=appointmentNotes(input,s.selectedVehicle,labels);
+  }
   await p.getByRole('button',exact('Continue')).click();
   s.stage='service_location';
   await p.getByRole('heading',exact('Select a Service Location')).waitFor();
@@ -240,7 +268,7 @@ export async function operate(operation,input) {
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
     // The resolved date becomes authoritative for readback and the final booking request.
     s.fingerprint=inputFingerprint({...input,preferred_date:date});
-    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,verified_services:s.selectedServices,verified_transport:s.selectedTransport,verified_pickup_address:s.pickupAddress||null,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
+    return {success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,scheduler_selection_note:s.selectionNote||'',booking_notes:s.appointmentNotes||input.booking_notes||'',verified_services:s.selectedServices,verified_transport:s.selectedTransport,verified_pickup_address:s.pickupAddress||null,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
     }
   } catch(e) {
     if(testOperation&&s&&(s.writeAttempted||s.contactSubmitted)){s.bookingStatus='unknown';return fail('booking_outcome_unknown','Do not retry submission. Verify the existing scheduler session or contact service.',{booking_status:'unknown'});}
