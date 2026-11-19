@@ -20,7 +20,7 @@ test('fuel clarification preserves known identity and never commits an unconfirm
 });
 test('fuel helper receives the failed question, uses strict schema and is bounded after one clarification',async()=>{
  let count=0;const fetchImpl=async(_u,o)=>{count++;const p=JSON.parse(o.body),i=JSON.parse(p.input);assert.equal(i.last_question,'Is it gas, hybrid, diesel or electric?');assert.equal(i.state.vehicle_model,'Maverick');assert.ok(p.text.format.schema.required.includes('fuel_candidate'));return {ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({action:'clarify',advice:'Confirm gasoline only.',question:null,fuel_candidate:'Gas'})}]}]})};};
- const b={call_id:'synthetic-maverick-fuel',scope:'vehicle_type',utterance:'Yes',last_question:'Is it gas, hybrid, diesel or electric?',state:{vehicle_make:'Ford',vehicle_year:'2025',vehicle_model:'Maverick',vehicle_type:null}};
+ const b={call_id:'synthetic-maverick-fuel',scope:'vehicle_type',utterance:'I think you said guess',last_question:'Is it gas, hybrid, diesel or electric?',state:{vehicle_make:'Ford',vehicle_year:'2025',vehicle_model:'Maverick',vehicle_type:null}};
  const env={OPENAI_API_KEY:'test-only',OPENAI_MODEL:'test-only',EXTERNAL_RECOVERY_ENABLED:'true'};
  assert.equal((await recover(b,env,fetchImpl)).fuel_candidate,'Gas');assert.equal((await recover({...b,utterance:'Still not sure'},env,fetchImpl)).recovery_action,'transfer');assert.equal(count,1);
 });
