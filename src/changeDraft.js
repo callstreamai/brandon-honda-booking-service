@@ -31,7 +31,7 @@ export function createChangeDraftHandler({interpret=interpretChangeCorrection,se
    }
    if(drafts.size>=500&&!prior)return {status:'draft_capacity',request_sent:false};
    drafts.set(id,{state,at:now()});
-   return {...prepareChangeRequest(state),...requestDetails(state),email_confirmed:state.email_confirmed,request_confirmed:false,correction_utterance:''};
+   return {...prepareChangeRequest(state),...requestDetails(state),email_confirmed:state.email_confirmed,request_confirmed:false,correction_utterance:'none'};
   }
   if(!prior)return {status:'fresh_readback_required',request_sent:false};
   if(present(input.correction_utterance))return {status:'fresh_readback_required',request_sent:false};
