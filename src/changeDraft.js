@@ -24,13 +24,15 @@ export function createChangeDraftHandler({interpret=interpretChangeCorrection,se
    if(prior&&correction){
     try{const patch=await interpret(correction,requestDetails(state),options);state={...state,...patch};if(Object.hasOwn(patch,'customer_email'))state.email_confirmed=false;}
     catch{return {status:'correction_unclear',request_sent:false,request_confirmed:false};}
-   }else if(prior){
-    // Intake may fill a specifically missing field, but an approval cannot rewrite the draft.
-    const missing=prepareChangeRequest(state).missing_field;
-    if(missing&&input[missing]!=null)state[missing]=input[missing];
+   }else if(prior&&!prior.ready){
+    // An incomplete draft is still intake. Merge all supplied fields together;
+    // a null extractor result must not erase an earlier collected value.
+    if(present(input.customer_email)&&input.customer_email!==state.customer_email)state.email_confirmed=false;
+    for(const field of fields)if(present(input[field]))state[field]=input[field];
+    if(state.customer_email===input.customer_email&&[true,'true'].includes(input.email_confirmed))state.email_confirmed=true;
    }
    if(drafts.size>=500&&!prior)return {status:'draft_capacity',request_sent:false};
-   drafts.set(id,{state,at:now()});
+   drafts.set(id,{state,at:now(),ready:prepareChangeRequest(state).status==='request_ready'});
    return {...prepareChangeRequest(state),...requestDetails(state),email_confirmed:state.email_confirmed,request_confirmed:false,correction_utterance:'none'};
   }
   if(!prior)return {status:'fresh_readback_required',request_sent:false};
