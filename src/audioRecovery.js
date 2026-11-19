@@ -6,7 +6,7 @@ const MAX_BYTES=16000*2*45, TTL=75000;
 const fallback=(status='unavailable')=>({success:false,audio_status:status,audio_candidate:'none',audio_question:'I could not verify that clearly. Please spell just the unclear part, or I can connect you with Service.'});
 export function checkEmail(input){const e=String(input.customer_email||'').trim();const missing=!e||e==='none'||e.includes('{{');return {success:true,audio_status:missing||validEmail(e)?'not_needed':'email_invalid',audio_field:'email',recognition_problem:!missing&&!validEmail(e),...(missing||validEmail(e)?{}:{email_confirmed:false})};}
 export function validListenUrl(value,callId){
- try{const u=new URL(value);return u.protocol==='wss:'&&u.hostname==='api.bland.ai'&&!u.username&&!u.password&&!u.port&&u.pathname===`/ws/listen/${callId}`;}catch{return false;}
+ try{const u=new URL(value);return u.protocol==='wss:'&&!u.username&&!u.password&&!u.port&&((u.hostname==='api.bland.ai'&&u.pathname===`/ws/listen/${callId}`)||(u.hostname==='stream-v2.aws.dc8.bland.ai'&&/^\/ws\/listen\/[A-Za-z0-9_.-]+$/.test(u.pathname)));}catch{return false;}
 }
 export function pcmWav(pcm){
  const b=Buffer.alloc(44+pcm.length);b.write('RIFF');b.writeUInt32LE(36+pcm.length,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(pcm.length,40);pcm.copy(b,44);return b;
