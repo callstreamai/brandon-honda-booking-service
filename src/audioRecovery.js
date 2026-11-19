@@ -1,4 +1,5 @@
 import {validEmail,spokenEmail} from './emailRecovery.js';
+import {spokenAddress} from './valet.js';
 
 const sessions=new Map(), attempts=new Map();
 const MAX_BYTES=16000*2*45, TTL=75000;
@@ -13,7 +14,7 @@ export function pcmWav(pcm){
 export function audible(pcm){let sum=0;for(let i=0;i+1<pcm.length;i+=2){const x=pcm.readInt16LE(i);sum+=x*x;}return pcm.length>=16000&&Math.sqrt(sum/(pcm.length/2))>=50;}
 function destroy(id){const s=sessions.get(id);if(!s)return;clearTimeout(s.timer);try{s.ws?.close();}catch{}s.chunks=[];sessions.delete(id);}
 export function closeAudio(){for(const id of sessions.keys())destroy(id);}
-export function audioStats(){return {audio_fallback_configured:process.env.AUDIO_FALLBACK_ENABLED==='true'&&!!process.env.OPENAI_API_KEY,audio_sessions:sessions.size};}
+export function audioStats(){return {audio_fallback_configured:process.env.AUDIO_FALLBACK_ENABLED==='true'&&!!process.env.OPENAI_API_KEY&&!!process.env.BLAND_LIVE_LISTEN_API_KEY,audio_sessions:sessions.size};}
 export async function transcribeClip(pcm,field,env=process.env,fetcher=fetch){
  const began=Date.now();if(!['email','address'].includes(field)||pcm.length>MAX_BYTES||!audible(pcm))return fallback('no_usable_audio');
  if(!env.OPENAI_API_KEY||!env.OPENAI_MODEL)return fallback();
@@ -30,10 +31,14 @@ export async function transcribeClip(pcm,field,env=process.env,fetcher=fetch){
   const p=await r.json();if(p.status!=='completed')return fallback('interpretation_incomplete');
   const text=p.output.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');let candidate=JSON.parse(text).candidate;
   if(typeof candidate!=='string'||candidate.length>400||!candidate.trim()||(field==='email'&&!validEmail(candidate)))candidate=null;
-  return {success:!!candidate,audio_status:candidate?'candidate':'unclear',audio_field:field,audio_candidate:candidate||'none',audio_question:candidate?`I heard ${field==='email'?spokenEmail(candidate):candidate}. Is that exactly right?`:'I still could not verify that. Please spell just the unclear part, or I can connect you with Service.',audio_transcription_ms:transcribed-began,audio_interpretation_ms:Date.now()-transcribed,audio_elapsed_ms:Date.now()-began,audio_seconds:pcm.length/32000};
+  return {success:!!candidate,audio_status:candidate?'candidate':'unclear',audio_field:field,audio_candidate:candidate||'none',audio_question:candidate?`I heard ${field==='email'?spokenEmail(candidate):spokenAddress(candidate)}. Is that exactly right?`:'I still could not verify that. Please spell just the unclear part, or I can connect you with Service.',audio_transcription_ms:transcribed-began,audio_interpretation_ms:Date.now()-transcribed,audio_elapsed_ms:Date.now()-began,audio_seconds:pcm.length/32000};
  }catch{return {...fallback('timeout_or_unavailable'),audio_elapsed_ms:Date.now()-began};}
 }
 export async function audioOperation(op,input,env=process.env,fetcher=fetch,WS=WebSocket){
+ const result=await operate(op,input,env,fetcher,WS);
+ return {...result,...(['email','address'].includes(input.audio_field)?{audio_field:input.audio_field}:{})};
+}
+async function operate(op,input,env,fetcher,WS){
  const id=String(input.call_id||''),field=input.audio_field;
  if(!/^[a-f0-9-]{36}$/i.test(id)||!['email','address'].includes(field))return fallback('invalid_input');
  if(op==='close'){destroy(id);return {success:true,audio_status:'closed'};}
@@ -55,7 +60,7 @@ export async function audioOperation(op,input,env=process.env,fetcher=fetch,WS=W
  if(op==='start'){
   if(input.recognition_problem!==true&&input.recognition_problem!=='true')return fallback('not_needed');
   if(['web_chat','chat'].includes(input.conversation_channel))return fallback('voice_only');
-  if(sessions.has(id)&&sessions.get(id).field===field)return {success:true,audio_status:'listening',audio_field:field};
+  if(sessions.has(id)&&sessions.get(id).field===field)return {success:true,audio_status:'listening',audio_field:field,audio_question:field==='email'?'Do you mind repeating the email one more time? Please spell the part before and after the at sign.':'Do you mind repeating the pickup address one more time, including any apartment, city, state and ZIP code?'};
   if(sessions.has(id))destroy(id);
   const attemptKey=id+':'+field,n=attempts.get(attemptKey)||{n:0,at:now};if(n.n>=2||sessions.size>=8||attempts.size>=500)return fallback('limit_reached');
   if(!validListenUrl(input.listen_url,id))return fallback('invalid_listen_url');
