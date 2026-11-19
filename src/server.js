@@ -4,7 +4,7 @@ import {valetReview} from './valet.js';
 import http from 'node:http';
 import {sendChangeRequest} from './changeRequest.js';
 import {createChangeDraftHandler} from './changeDraft.js';
-import {nextSchedulingStep} from './schedulingResume.js';
+import {nextSchedulingStep,schedulingDecision} from './schedulingResume.js';
 import {lookupProfile} from './profileLookup.js';
 import {ingestReceipt} from './receiptIntake.js';
 import {registerManagementLink,cancelOperation,cancellationConfirmed} from './cancellation.js';
@@ -48,7 +48,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.url==='/appointments/lookup'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const rows=bookingStore().active(input.caller_phone);return send(200,{success:true,status:rows.length?'appointment_found':'no_appointment',appointments:rows.map(publicRecord)});}
     if(req.url==='/profile/lookup')return send(200,await lookupProfile(input));
     if(req.url==='/valet/review')return send(200,valetReview(input));
-    if(req.url==='/policy'){const policy=policyDecision(input);const prefetch=availabilityPrefetch.start(input);return send(200,{success:true,policy,customer_email:input.customer_email??null,email_confirmed:input.email_confirmed??false,transport_option:input.transport_option,next_step:nextSchedulingStep(input,policy),earliest_requested:input.earliest_requested||false,prefetch_status:prefetch.status,available_slots:[],preferred_time:'none',readback_confirmed:false});}
+    if(req.url==='/policy'){const policy=policyDecision(input);const step=[true,'true'].includes(input.upfront_intake)?schedulingDecision(input,policy):{next_step:nextSchedulingStep(input,policy)};const prefetch=step.next_step==='availability_check'||![true,'true'].includes(input.upfront_intake)?availabilityPrefetch.start(input):{status:'not_started'};return send(200,{success:true,policy,...step,customer_email:input.customer_email??null,email_confirmed:input.email_confirmed??false,transport_option:input.transport_option,earliest_requested:input.earliest_requested||false,prefetch_status:prefetch.status,available_slots:[],preferred_time:'none',readback_confirmed:false});}
     if(req.url==='/availability'&&[true,'true'].includes(input.anticipatory_availability))return send(200,await availabilityPrefetch.consume(input));
     if(req.url==='/sessions/close')await availabilityPrefetch.close(input.call_id);
     const result=req.url==='/conversation/help'?await recover(input):await operate(paths[req.url],input);
