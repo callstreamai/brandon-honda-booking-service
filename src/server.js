@@ -14,6 +14,7 @@ import {operate,shutdown,browserStats} from './fordDriver.js';
 import {recover} from './recovery.js';
 import {normalizeResponseState} from './responseValues.js';
 import {createAvailabilityPrefetch,searchInput} from './availabilityPrefetch.js';
+import {confirmedEmailState} from './emailConfirmation.js';
 const availabilityPrefetch=createAvailabilityPrefetch(operate);
 const secret=process.env.WEBHOOK_SECRET||'';
 function authorized(req){const a=Buffer.from(req.headers.authorization||''),b=Buffer.from('Bearer '+secret);return !!secret&&a.length===b.length&&crypto.timingSafeEqual(a,b);}
@@ -30,6 +31,7 @@ const server=http.createServer(async(req,res)=>{
     input.transport_option=normalizeTransport(input.transport_option);
     Object.assign(input,normalizeResponseState(input));
     Object.assign(input,searchInput(input));
+    Object.assign(input,confirmedEmailState(input));
     if(input.state)input.state=normalizeResponseState(input.state);
     if(req.url==='/speech/check-email')return send(200,checkEmail(input));
     if(['/speech/open','/speech/recover','/speech/close'].includes(req.url))return send(200,await audioOperation(req.url.split('/').pop(),input));
@@ -44,7 +46,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.url==='/appointments/lookup'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const rows=bookingStore().active(input.caller_phone);return send(200,{success:true,status:rows.length?'appointment_found':'no_appointment',appointments:rows.map(publicRecord)});}
     if(req.url==='/profile/lookup')return send(200,await lookupProfile(input));
     if(req.url==='/valet/review')return send(200,valetReview(input));
-    if(req.url==='/policy'){const policy=policyDecision(input);const prefetch=availabilityPrefetch.start(input);return send(200,{success:true,policy,transport_option:input.transport_option,next_step:nextSchedulingStep(input,policy),earliest_requested:input.earliest_requested||false,prefetch_status:prefetch.status,available_slots:[],preferred_time:'none',readback_confirmed:false});}
+    if(req.url==='/policy'){const policy=policyDecision(input);const prefetch=availabilityPrefetch.start(input);return send(200,{success:true,policy,customer_email:input.customer_email??null,email_confirmed:input.email_confirmed??false,transport_option:input.transport_option,next_step:nextSchedulingStep(input,policy),earliest_requested:input.earliest_requested||false,prefetch_status:prefetch.status,available_slots:[],preferred_time:'none',readback_confirmed:false});}
     if(req.url==='/availability'&&[true,'true'].includes(input.anticipatory_availability))return send(200,await availabilityPrefetch.consume(input));
     if(req.url==='/sessions/close')await availabilityPrefetch.close(input.call_id);
     const result=req.url==='/conversation/help'?await recover(input):await operate(paths[req.url],input);
