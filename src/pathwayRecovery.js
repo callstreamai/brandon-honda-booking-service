@@ -61,13 +61,15 @@ export async function recoverPathway(body,env=process.env,fetcher=fetch){
  const input={source_node:String(body.source_node||'').slice(0,100),utterance:body.utterance.slice(0,2000),last_question:String(body.last_question||'').slice(0,700),reason:String(body.reason||'').slice(0,500),context:String(body.context||'').slice(0,2200),state:{}};
  for(const k of fields){const v=body.state?.[k];if(v!=null&&!['string','boolean','number'].includes(typeof v))continue;input.state[k]=typeof v==='string'?v.slice(0,1600):v??null;}
  input.state=normalizeResponseState(input.state);
- const decorate=result=>({...result,...(yes(body.upfront_intake)&&result.recovery_status==='resume'&&!['cancel','reschedule'].includes(input.state.existing_action)?{recovery_resume_node:'policy_hook'}:{}),recovery_values:Object.fromEntries(interpretedFields.map(k=>[k,input.state[k]??null]))});
+ const decorate=result=>({...result,...(yes(body.upfront_intake)&&result.recovery_status==='resume'&&!['cancel','reschedule'].includes(input.state.existing_action)?{recovery_resume_node:result.recovery_question?'contact_name':'policy_hook'}:{}),recovery_values:Object.fromEntries(interpretedFields.map(k=>[k,input.state[k]??null]))});
  const safe=(advice)=>decorate(pathwayRecoveryResult(input,{resume_node:'pathway_recovery_help',advice,question:null}));
  if(dangerous(input.state))return safe('The booking outcome is uncertain. Offer staff verification; never retry or claim nothing was booked.');
  const now=Date.now();for(const [k,v]of calls)if(now-v.at>1800000)calls.delete(k);
  let entry=calls.get(body.call_id);if(!entry){if(calls.size>=500)return safe('Recovery is temporarily unavailable. Offer help without losing the request.');entry={at:now,total:0,stages:{},busy:false};calls.set(body.call_id,entry);}
  const stage=input.source_node;if(entry.busy||entry.total>=6||(entry.stages[stage]||0)>=2)return safe('Recovery has not resolved this step. Offer staff help without asking the same question again.');
- const knownTarget=knownFieldResume(stage,input.state);
+ // The upfront collector handles several fields; a known name alone does not
+ // satisfy its current fuel, phone, or vehicle question.
+ const knownTarget=yes(body.upfront_intake)&&stage==='contact_name'?null:knownFieldResume(stage,input.state);
  if(knownTarget&&!/wrong|correct|change|instead|actually|different|not that/i.test(input.utterance+' '+input.reason)){
   entry.total++;entry.stages[stage]=(entry.stages[stage]||0)+1;
   return decorate(pathwayRecoveryResult(input,{resume_node:knownTarget,advice:'This step is already satisfied by captured information. Continue to the next step and ask only a genuinely missing detail. Preserve all customer data and permissions.',question:null}));
