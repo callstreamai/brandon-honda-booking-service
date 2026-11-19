@@ -26,6 +26,8 @@ export function knownFieldResume(source,s){
   transport_option:['dropoff','wait','pickup'].includes(s.transport_option)?'policy_hook':null,
   date_preference:(/^\d{4}-\d{2}-\d{2}$/.test(String(s.preferred_date||''))||yes(s.earliest_requested))?'policy_hook':null
  };
+ // Known fuel does not resolve a missing model in the provider's menu.
+ if(source==='adapter_issue'&&s.missing_field==='vehicle_model')return null;
  if(source==='adapter_issue'&&fuel)return 'policy_hook';
  let next=map[source]||null;
  const visited=new Set([source]);
@@ -59,7 +61,7 @@ export async function recoverPathway(body,env=process.env,fetcher=fetch){
  const input={source_node:String(body.source_node||'').slice(0,100),utterance:body.utterance.slice(0,2000),last_question:String(body.last_question||'').slice(0,700),reason:String(body.reason||'').slice(0,500),context:String(body.context||'').slice(0,2200),state:{}};
  for(const k of fields){const v=body.state?.[k];if(v!=null&&!['string','boolean','number'].includes(typeof v))continue;input.state[k]=typeof v==='string'?v.slice(0,1600):v??null;}
  input.state=normalizeResponseState(input.state);
- const decorate=result=>({...result,recovery_values:Object.fromEntries(interpretedFields.map(k=>[k,input.state[k]??null]))});
+ const decorate=result=>({...result,...(yes(body.upfront_intake)&&result.recovery_status==='resume'&&!['cancel','reschedule'].includes(input.state.existing_action)?{recovery_resume_node:'policy_hook'}:{}),recovery_values:Object.fromEntries(interpretedFields.map(k=>[k,input.state[k]??null]))});
  const safe=(advice)=>decorate(pathwayRecoveryResult(input,{resume_node:'pathway_recovery_help',advice,question:null}));
  if(dangerous(input.state))return safe('The booking outcome is uncertain. Offer staff verification; never retry or claim nothing was booked.');
  const now=Date.now();for(const [k,v]of calls)if(now-v.at>1800000)calls.delete(k);
