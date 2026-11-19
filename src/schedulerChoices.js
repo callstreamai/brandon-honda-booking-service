@@ -1,6 +1,6 @@
 const normalized=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function nearestYears(requested,options){
- return options.filter(x=>/^\d{4}$/.test(x)&&Math.abs(Number(x)-Number(requested))<=5&&Number(x)!==Number(requested)).sort((a,b)=>Math.abs(Number(a)-Number(requested))-Math.abs(Number(b)-Number(requested))||Number(b)-Number(a));
+ return options.filter(x=>/^\d{4}$/.test(x)&&Math.abs(Number(x)-Number(requested))<=5&&Number(x)!==Number(requested)).sort((a,b)=>Math.abs(Number(a)-Number(requested))-Math.abs(Number(b)-Number(requested))||Number(a)-Number(b));
 }
 export function equivalentModel(requested,options){
  const exact=options.filter(x=>normalized(x)===normalized(requested));
