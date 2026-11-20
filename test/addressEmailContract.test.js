@@ -40,7 +40,7 @@ test('legacy version retains its contract until the candidate is promoted',()=>{
  assert.deepEqual(confirmedEmailState({email_declined:true}),{customer_email:null,email_confirmed:true});
 });
 test('plain refusal explains required email without a model; later corrections remain available',async()=>{
- for(const utterance of ['Leave it out.','Skip the email.','I do not want an email.','No email.']){
+ for(const utterance of ['Leave it out.','Skip the email.','I do not want an email.','No email.','I cannot provide an email.']){
   const r=await recoverEmail({call_id:'decline-'+utterance,contact_contract_version:2,upfront_intake:true,utterance,previous_email:'old@example.com'},{});
   assert.equal(r.email_required_explained,true);assert.equal(r.customer_email,'none');assert.equal(r.email_resume_node,'policy_hook');assert.match(r.email_question,/requires an email/);
  }
