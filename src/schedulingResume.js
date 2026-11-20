@@ -21,7 +21,7 @@ export function schedulingDecision(i,policy){
  if(Number(i.contact_contract_version)>=2&&(!validEmail(i.customer_email||'')||!yes(i.email_confirmed)||yes(i.email_declined))){
   if(yes(i.email_declined)){
    if(yes(i.email_required_explained))return result('account_support');
-   return {...result('email_recovery_confirm'),email_required_explained:true,email_declined:false,email_accepted:false,email_confirmed:false,customer_email:'none',email_candidate:'none',email_resume_node:'policy_hook',email_question:'The scheduler requires an email address to book your appointment. What email address can we use?'};
+   return {...result('email_recovery_confirm'),email_required_explained:true,email_declined:false,email_accepted:false,email_confirmed:false,customer_email:'none',email_candidate:'none',email_helper_status:'clarify',email_resume_node:'policy_hook',email_question:'The scheduler requires an email address to book your appointment. What email address can we use?'};
   }
   return result(business?'business_email':'contact_email');
  }
