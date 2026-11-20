@@ -10,3 +10,8 @@ test('voice-spoken compass directions match provider abbreviations without chang
  assert.equal(normalizeAddress('19100 44th Avenue West, Lynnwood, Washington 98036'),normalizeAddress('19100 44th Ave W, Lynnwood WA 98036, USA'));
  assert.notEqual(normalizeAddress('19100 4th Avenue West, Lynnwood, Washington 98036'),normalizeAddress('19100 44th Ave W, Lynnwood WA 98036'));
 });
+test('spoken street ordinals match numbered streets without collapsing distinct addresses',()=>{
+ for(const word of ['Forty-fourth','forty fourth'])assert.equal(normalizeAddress('19100 '+word+' Avenue West Lynnwood WA 98036'),normalizeAddress('19100 44th Ave W Lynnwood WA 98036'));
+ assert.notEqual(normalizeAddress('19100 Fourth Avenue West Lynnwood WA 98036'),normalizeAddress('19100 44th Ave W Lynnwood WA 98036'));
+ assert.equal(normalizeAddress('100 Twenty First Street WA 98036'),normalizeAddress('100 21st St WA 98036'));
+});

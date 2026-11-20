@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
 export const isValet=i=>i.transport_option==='pickup';
-export const normalizeAddress=x=>String(x||'').toLowerCase().replace(/\b(united states|usa)\b/g,'').replace(/(\d{5})-\d{4}\b/g,'$1').replace(/\b(highway|hwy)\b/g,'hwy').replace(/\bstreet\b/g,'st').replace(/\bavenue\b/g,'ave').replace(/\broad\b/g,'rd').replace(/\bwashington\b/g,'wa').replace(/\bnorthwest\b/g,'nw').replace(/\bnortheast\b/g,'ne').replace(/\bsouthwest\b/g,'sw').replace(/\bsoutheast\b/g,'se').replace(/\bnorth\b/g,'n').replace(/\bsouth\b/g,'s').replace(/\beast\b/g,'e').replace(/\bwest\b/g,'w').replace(/[^a-z0-9]/g,'');
+export function canonicalStreetOrdinals(value){
+ const units={first:1,second:2,third:3,fourth:4,fifth:5,sixth:6,seventh:7,eighth:8,ninth:9,tenth:10,eleventh:11,twelfth:12,thirteenth:13,fourteenth:14,fifteenth:15,sixteenth:16,seventeenth:17,eighteenth:18,nineteenth:19,twentieth:20,thirtieth:30,fortieth:40,fiftieth:50,sixtieth:60,seventieth:70,eightieth:80,ninetieth:90,hundredth:100};
+ const tens={twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+ const pattern=new RegExp('\\b(?:(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[ -])?('+Object.keys(units).join('|')+')(?=\\s+(?:avenue|ave|street|st|road|rd|place|pl|drive|dr|lane|ln|court|ct|boulevard|blvd|way)\\b)','gi');
+ return String(value||'').replace(pattern,(all,t,u)=>{const n=units[u.toLowerCase()];if(t&&n>9)return all;const v=(t?tens[t.toLowerCase()]:0)+n;return v+((v%100>=11&&v%100<=13)?'th':({1:'st',2:'nd',3:'rd'}[v%10]||'th'));});
+}
+export const normalizeAddress=x=>canonicalStreetOrdinals(x).toLowerCase().replace(/\b(united states|usa)\b/g,'').replace(/(\d{5})-\d{4}\b/g,'$1').replace(/\b(highway|hwy)\b/g,'hwy').replace(/\bstreet\b/g,'st').replace(/\bavenue\b/g,'ave').replace(/\broad\b/g,'rd').replace(/\bwashington\b/g,'wa').replace(/\bnorthwest\b/g,'nw').replace(/\bnortheast\b/g,'ne').replace(/\bsouthwest\b/g,'sw').replace(/\bsoutheast\b/g,'se').replace(/\bnorth\b/g,'n').replace(/\bsouth\b/g,'s').replace(/\beast\b/g,'e').replace(/\bwest\b/g,'w').replace(/[^a-z0-9]/g,'');
 export const valetFingerprint=i=>crypto.createHash('sha256').update(JSON.stringify([normalizeAddress(i.pickup_address),i.pickup_access||'',i.vehicle_operable||''])).digest('hex');
 // The approved fingerprint belongs to the previous readback. A correction must
 // invalidate that approval and its slot before any calendar/browser reuse.
@@ -16,7 +22,7 @@ export function valetReview(i){const missing=valetMissing({...i,pickup_address_c
 export function valetMissing(i){if(!/^\d+\s+.+\b\d{5}(?:-\d{4})?\s*$/.test(String(i.pickup_address||'').trim()))return 'pickup_address';if(![true,'true'].includes(i.pickup_address_confirmed)||i.pickup_confirmed_fingerprint!==valetFingerprint(i))return 'pickup_address_confirmed';if(!['yes','no'].includes(i.vehicle_operable))return 'vehicle_operable';if(String(i.pickup_access||'').length>125)return 'pickup_access';return null;}
 export async function applyValetAddress(s,i){
  const p=s.page,missing=valetMissing(i);if(missing)return {success:false,status:'valet_details_required',missing_field:missing};
- await p.locator('#address-field-input').waitFor({state:'visible'});await p.locator('#address-field-input').fill(i.pickup_address);
+ await p.locator('#address-field-input').waitFor({state:'visible'});await p.locator('#address-field-input').fill(Number(i.contact_contract_version)>=2?canonicalStreetOrdinals(i.pickup_address):i.pickup_address);
  const options=p.getByRole('option');
  const retry={success:false,status:'pickup_address_unverified',step_question:'The scheduler could not match that pickup address. What is the corrected street address, city, state, and ZIP code?',pickup_address_confirmed:false};
  try{await options.first().waitFor({state:'visible'});}catch(e){if(Number(i.contact_contract_version)>=2&&e.name==='TimeoutError')return retry;throw e;}
