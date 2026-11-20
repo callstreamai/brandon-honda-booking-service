@@ -34,6 +34,20 @@ export async function inspectTestBooking(s,{screenshot=false}={}){
   if(screenshot)result.screenshot_base64=(await page.screenshot({fullPage:true})).toString('base64');
   return result;
 }
+export async function applyReviewCommunication(s,input){
+ const p=s.page;
+  if(isValet(input)){
+      s.reviewPhase='valet_communication';
+      if(![true,'true'].includes(input.caller_phone_confirmed)||!/^\d{10}$/.test(digits(input.caller_phone)))throw new Error('Valet requires a confirmed contact phone');
+      const phone=p.locator('#communications-phone');await phone.fill(digits(input.caller_phone));
+      if(digits(await phone.inputValue())!==digits(input.caller_phone))throw new Error('Valet communication phone mismatch');
+    }else{
+    s.reviewPhase='communication';
+    const both=p.getByRole('radio',{name:input.confirmation_method||'Both',exact:true});
+    if(await both.count()===1){if(!await both.isChecked())await both.locator('xpath=ancestor::label[1]').click();if(!await both.isChecked())throw new Error('Communication preference not applied');}
+    else throw new Error('Communication preference needs mapping');
+    }
+}
 export async function prepareTestReview(s,input){
   const p=s.page;
   if(s.stage!=='calendar'||s.date!==input.preferred_date||!s.slots.includes(input.preferred_time))return {success:false,status:'fresh_availability_required'};
@@ -79,17 +93,7 @@ export async function prepareTestReview(s,input){
       await comments.fill(note.slice(0,max));
       s.savedAppointmentNotes=await comments.inputValue();
     }
-    if(isValet(input)){
-      s.reviewPhase='valet_communication';
-      if(input.confirmation_method!=='Phone')throw new Error('Valet requires caller-approved phone contact');
-      const phone=p.locator('#communications-phone');await phone.fill(digits(input.caller_phone));
-      if(digits(await phone.inputValue())!==digits(input.caller_phone))throw new Error('Valet communication phone mismatch');
-    }else{
-    s.reviewPhase='communication';
-    const both=p.getByRole('radio',{name:input.confirmation_method||'Both',exact:true});
-    if(await both.count()===1){if(!await both.isChecked())await both.locator('xpath=ancestor::label[1]').click();if(!await both.isChecked())throw new Error('Communication preference not applied');}
-    else throw new Error('Communication preference needs mapping');
-    }
+    await applyReviewCommunication(s,input);
     const snapshot=await inspectTestBooking(s);
     const candidates=snapshot.buttons.filter(b=>b.enabled&&finalAction.test(b.name));
     if(candidates.length===1){s.finalButton=candidates[0].name;s.reviewToken=crypto.randomUUID();snapshot.review_token=s.reviewToken;snapshot.status='booking_review_ready';}
