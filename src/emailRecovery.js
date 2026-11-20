@@ -36,7 +36,7 @@ export async function recoverEmail(body,env=process.env,fetcher=fetch){
   n.partial='';attempts.set(key,n);
  }
  const spelled=spelledEmail(utterance);if(spelled)return result(spelled);
- if(!key||n.n>=2||attempts.size>=500)return {...result(null,false,'I could not verify the email. Would you like to leave it out or speak with Service?'),email_helper_status:'unresolved'};
+ if(!key||n.n>=2||attempts.size>=500)return {...result(null,false,Number(body.contact_contract_version)>=2&&!['cancel','reschedule'].includes(body.existing_action)?'The scheduler needs an email to book. Please spell the email one letter at a time, or I can help you speak with Service.':'I could not verify the email. Would you like to leave it out or speak with Service?'),email_helper_status:'unresolved'};
  if(env.EXTERNAL_RECOVERY_ENABLED!=='true'||!env.OPENAI_API_KEY||!env.OPENAI_MODEL)return result(null);
  attempts.set(key,{n:n.n+1,at:now});
  let timer;const controller=new AbortController();

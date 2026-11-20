@@ -2,6 +2,12 @@ import crypto from 'node:crypto';
 export const isValet=i=>i.transport_option==='pickup';
 export const normalizeAddress=x=>String(x||'').toLowerCase().replace(/\b(united states|usa)\b/g,'').replace(/(\d{5})-\d{4}\b/g,'$1').replace(/\b(highway|hwy)\b/g,'hwy').replace(/\bstreet\b/g,'st').replace(/\bavenue\b/g,'ave').replace(/\broad\b/g,'rd').replace(/\bwashington\b/g,'wa').replace(/\bnorthwest\b/g,'nw').replace(/\bnortheast\b/g,'ne').replace(/\bsouthwest\b/g,'sw').replace(/\bsoutheast\b/g,'se').replace(/\bnorth\b/g,'n').replace(/\bsouth\b/g,'s').replace(/\beast\b/g,'e').replace(/\bwest\b/g,'w').replace(/[^a-z0-9]/g,'');
 export const valetFingerprint=i=>crypto.createHash('sha256').update(JSON.stringify([normalizeAddress(i.pickup_address),i.pickup_access||'',i.vehicle_operable||''])).digest('hex');
+// The approved fingerprint belongs to the previous readback. A correction must
+// invalidate that approval and its slot before any calendar/browser reuse.
+export function pickupCorrectionState(i){
+ if(!(Number(i.contact_contract_version)>=2)||!i.pickup_confirmed_fingerprint||i.pickup_confirmed_fingerprint==='none'||i.pickup_confirmed_fingerprint===valetFingerprint(i))return {};
+ return {pickup_address_confirmed:false,pickup_confirmed_fingerprint:'none',valet_review_fingerprint:'none',preferred_time:'none',available_slots:[],readback_confirmed:false};
+}
 export function spokenAddress(value){
  const words=['zero','one','two','three','four','five','six','seven','eight','nine'];
  return String(value||'').replace(/^\d+/,n=>n.split('').map(x=>words[Number(x)]).join(' ')+',').replace(/\b(\d{5})(?:-\d{4})?$/,n=>n.split('').map(x=>words[Number(x)]||x).join(' ')).replace(/\bAve\b/g,'Avenue').replace(/\bHwy\b/g,'Highway').replace(/\bWA\b/g,'Washington').replace(/\bW\b/g,'West').replace(/\bE\b/g,'East').replace(/\bN\b/g,'North').replace(/\bS\b/g,'South');
@@ -11,12 +17,14 @@ export function valetMissing(i){if(!/^\d+\s+.+\b\d{5}(?:-\d{4})?\s*$/.test(Strin
 export async function applyValetAddress(s,i){
  const p=s.page,missing=valetMissing(i);if(missing)return {success:false,status:'valet_details_required',missing_field:missing};
  await p.locator('#address-field-input').waitFor({state:'visible'});await p.locator('#address-field-input').fill(i.pickup_address);
- const options=p.getByRole('option');await options.first().waitFor({state:'visible'});
+ const options=p.getByRole('option');
+ const retry={success:false,status:'pickup_address_unverified',step_question:'The scheduler could not match that pickup address. What is the corrected street address, city, state, and ZIP code?',pickup_address_confirmed:false};
+ try{await options.first().waitFor({state:'visible'});}catch(e){if(Number(i.contact_contract_version)>=2&&e.name==='TimeoutError')return retry;throw e;}
  const names=await options.allTextContents();const matches=names.filter(x=>normalizeAddress(x)===normalizeAddress(i.pickup_address));
- if(matches.length!==1)return {success:false,status:'pickup_address_unverified',message:'Pickup address could not be uniquely matched; do not substitute another address.'};
+ if(matches.length!==1)return {...retry,message:'Pickup address could not be uniquely matched; do not substitute another address.'};
  await options.filter({hasText:matches[0]}).click();await p.locator('#find-vehicle-textarea').fill(i.pickup_access||'');
  s.pickupAddress=matches[0].trim();s.pickupAccess=i.pickup_access||'';
  await p.getByRole('button',{name:'Continue',exact:true}).first().click();await s.waitForReads();
- if(await p.locator('#address-field-input').isVisible())return {success:false,status:'pickup_address_unavailable',message:'Ford did not accept pickup availability for this address. Offer staff help; do not book drop-off instead.'};
+ if(await p.locator('#address-field-input').isVisible())return {...retry,status:'pickup_address_unavailable',step_question:'The scheduler did not accept pickup for that address. Is there a correction to the pickup address, or would you prefer drop-off or help from Service?',message:'Do not book drop-off without the caller choosing it.'};
  return null;
 }

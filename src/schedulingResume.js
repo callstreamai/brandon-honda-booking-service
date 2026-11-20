@@ -18,6 +18,13 @@ export function schedulingDecision(i,policy){
  if(!yes(i.caller_phone_confirmed)||!/^1?\d{10}$/.test(String(i.caller_phone||'').replace(/\D/g,'')))return ask('caller_phone','Is the number you’re calling from the best number for your appointment?');
  const vehicle=['vehicle_year','vehicle_make','vehicle_model'].filter(k=>!supplied(i[k]));
  if(vehicle.length)return ask('vehicle_identity',vehicle.length===3?'What is the year, make, and model of your vehicle?':`What is the ${vehicle.map(k=>k.replace('vehicle_','')).join(' and ')} of your vehicle?`);
+ if(Number(i.contact_contract_version)>=2&&(!validEmail(i.customer_email||'')||!yes(i.email_confirmed)||yes(i.email_declined))){
+  if(yes(i.email_declined)){
+   if(yes(i.email_required_explained))return result('account_support');
+   return {...result('email_recovery_confirm'),email_required_explained:true,email_declined:false,email_accepted:false,email_confirmed:false,customer_email:'none',email_candidate:'none',email_resume_node:'policy_hook',email_question:'The scheduler requires an email address to book your appointment. What email address can we use?'};
+  }
+  return result(business?'business_email':'contact_email');
+ }
  if(!yes(i.email_confirmed)||(!validEmail(i.customer_email||'')&&!yes(i.email_declined)))return result(business?'business_email':'contact_email');
  if(business&&!validEmail(i.customer_email||''))return result('account_support');
  if(!['Text','Email','Both','None','Phone'].includes(i.confirmation_method))return result('contact_confirmation');

@@ -1,5 +1,6 @@
 import {isValet,normalizeAddress} from './valet.js';
 import {accountTypeFor} from './accountType.js';
+import {validEmail} from './emailRecovery.js';
 import {inputFingerprint} from './policy.js';
 import {allowedTestCaller,bookingStore,publicRecord,phoneDigits} from './bookingStore.js';
 import {prepareTestReview,commitTestBooking,inspectTestBooking} from './testBooking.js';
@@ -26,6 +27,7 @@ export function reviewMatches(input,selectedServices,screen){
 export async function bookVoiceTest(s,input){
  if(!allowedTestCaller(input))return {success:false,status:'write_disabled'};
  if(![true,'true'].includes(input.readback_confirmed))return {success:false,status:'readback_required'};
+ if(Number(input.contact_contract_version)>=2&&(!validEmail(input.customer_email)||![true,'true'].includes(input.email_confirmed)||[true,'true'].includes(input.email_declined)))return {success:false,status:'email_required',email_confirmed:false};
  if((accountTypeFor(input)==='business'?!String(input.business_name||'').trim():!/^\S+\s+\S/.test(input.customer_name||''))||!['Text','Email','Both','Phone'].includes(input.confirmation_method))return {success:false,status:'contact_required'};
  if(['Text','Both'].includes(input.confirmation_method)&&![true,'true'].includes(input.sms_consent))return {success:false,status:'communications_consent_required'};
  if(['Email','Both'].includes(input.confirmation_method)&&!/^\S+@\S+\.\S+$/.test(input.customer_email||''))return {success:false,status:'email_required'};
