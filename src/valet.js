@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 export const isValet=i=>i.transport_option==='pickup';
-export const normalizeAddress=x=>String(x||'').toLowerCase().replace(/\b(united states|usa)\b/g,'').replace(/(\d{5})-\d{4}\b/g,'$1').replace(/\b(highway|hwy)\b/g,'hwy').replace(/\bstreet\b/g,'st').replace(/\bavenue\b/g,'ave').replace(/\broad\b/g,'rd').replace(/\bwashington\b/g,'wa').replace(/[^a-z0-9]/g,'');
+export const normalizeAddress=x=>String(x||'').toLowerCase().replace(/\b(united states|usa)\b/g,'').replace(/(\d{5})-\d{4}\b/g,'$1').replace(/\b(highway|hwy)\b/g,'hwy').replace(/\bstreet\b/g,'st').replace(/\bavenue\b/g,'ave').replace(/\broad\b/g,'rd').replace(/\bwashington\b/g,'wa').replace(/\bnorthwest\b/g,'nw').replace(/\bnortheast\b/g,'ne').replace(/\bsouthwest\b/g,'sw').replace(/\bsoutheast\b/g,'se').replace(/\bnorth\b/g,'n').replace(/\bsouth\b/g,'s').replace(/\beast\b/g,'e').replace(/\bwest\b/g,'w').replace(/[^a-z0-9]/g,'');
 export const valetFingerprint=i=>crypto.createHash('sha256').update(JSON.stringify([normalizeAddress(i.pickup_address),i.pickup_access||'',i.vehicle_operable||''])).digest('hex');
 export function spokenAddress(value){
  const words=['zero','one','two','three','four','five','six','seven','eight','nine'];

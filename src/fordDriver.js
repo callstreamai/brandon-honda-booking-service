@@ -165,9 +165,9 @@ async function atCalendar(s,input,decision) {
   await s.waitForReads();
   if(decision.advisor==='Nick') {
     const options=(await advisors.locator('option').allTextContents()).map(label=>({label:label.trim()}));
-    // Never substitute the default advisor for Lincoln non-express work.
+    // Never substitute the default advisor for Lincoln work; the final dealer policy requires Nick for all Lincoln appointments.
     const nick=options.filter(x=>/\bnick\b/i.test(x.label));
-    if(nick.length!==1) return fail('advisor_unavailable','Nick is required for this Lincoln request but is not uniquely selectable.');
+    if(nick.length!==1) return fail('advisor_unavailable','Nick is required for this Lincoln request but is not uniquely selectable.',{advisor_options:options.map(x=>x.label)});
     await advisors.selectOption({label:nick[0].label});
   }
   s.stage='calendar';return null;

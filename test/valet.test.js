@@ -5,3 +5,8 @@ test('address normalization accepts provider formatting but not a different stre
 test('valet address and access corrections invalidate old availability and approval fingerprint',()=>{for(const patch of [{pickup_address:'20020 Highway 99 Lynnwood WA 98036'},{pickup_access:'Rear lot'},{pickup_address_confirmed:false}])assert.notEqual(inputFingerprint(valid),inputFingerprint({...valid,...patch}));});
 
 test("changed access cannot reuse approval of an older readback",()=>{const fresh={...valid,pickup_access:"Call on arrival"};assert.equal(valetMissing(fresh),"pickup_address_confirmed");const r=valetReview(fresh);assert.match(r.valet_summary,/Call on arrival/);assert.equal(r.pickup_address_confirmed,false);assert.notEqual(r.valet_review_fingerprint,valid.pickup_confirmed_fingerprint);assert.equal(valetMissing({...fresh,pickup_confirmed_fingerprint:r.valet_review_fingerprint,pickup_address_confirmed:true}),null);});
+
+test('voice-spoken compass directions match provider abbreviations without changing street',()=>{
+ assert.equal(normalizeAddress('19100 44th Avenue West, Lynnwood, Washington 98036'),normalizeAddress('19100 44th Ave W, Lynnwood WA 98036, USA'));
+ assert.notEqual(normalizeAddress('19100 4th Avenue West, Lynnwood, Washington 98036'),normalizeAddress('19100 44th Ave W, Lynnwood WA 98036'));
+});
