@@ -45,3 +45,9 @@ test('plain refusal explains required email without a model; later corrections r
   assert.equal(r.email_required_explained,true);assert.equal(r.customer_email,'none');assert.equal(r.email_resume_node,'policy_hook');assert.match(r.email_question,/requires an email/);
  }
 });
+test('actual Bland refusal with null email extraction uses its refusal state, and a newer email supersedes it',async()=>{
+ const b={contact_contract_version:2,upfront_intake:true,email_intake_route:'account_support',utterance:null};
+ const first=await recoverEmail(b,{});assert.equal(first.email_required_explained,true);assert.equal(first.email_helper_status,'clarify');
+ const second=await recoverEmail({...b,email_required_explained:true,previous_declined:true},{});assert.equal(second.email_helper_status,'required_unavailable');
+ const correction=await recoverEmail({...b,email_required_explained:true,previous_declined:true,utterance:'vince@callstreamai.com'},{});assert.equal(correction.email_helper_status,'candidate');assert.equal(correction.customer_email,'vince@callstreamai.com');
+});
