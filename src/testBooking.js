@@ -1,4 +1,5 @@
 import {isValet} from './valet.js';
+import {verifyManualConcernReview} from './manualConcern.js';
 import crypto from 'node:crypto';
 import {accountTypeFor,selectAccountType} from './accountType.js';
 import {isServiceDate} from './policy.js';
@@ -94,6 +95,7 @@ export async function prepareTestReview(s,input){
       s.savedAppointmentNotes=await comments.inputValue();
     }
     await applyReviewCommunication(s,input);
+    if(s.manualConcern&&!await verifyManualConcernReview(s,input))throw new Error('The final diagnostic description does not match the corrected concern');
     const snapshot=await inspectTestBooking(s);
     const candidates=snapshot.buttons.filter(b=>b.enabled&&finalAction.test(b.name));
     if(candidates.length===1){s.finalButton=candidates[0].name;s.reviewToken=crypto.randomUUID();snapshot.review_token=s.reviewToken;snapshot.status='booking_review_ready';}

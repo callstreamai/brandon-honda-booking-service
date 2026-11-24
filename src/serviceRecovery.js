@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {diagnosisLabel} from './manualConcern.js';
 import {matchNamedServices,closestServiceCategories} from './serviceMatch.js';
 const calls=new Map();
 const schema={type:'object',additionalProperties:false,properties:{action:{type:'string',enum:['match','clarify','staff']},labels:{type:'array',items:{type:'string'}},question:{type:['string','null']},reason:{type:'string'}},required:['action','labels','question','reason']};
@@ -20,9 +21,11 @@ export function validateServiceAdvice(input,menu,result){
  }
  return staff(result.reason,true);
 }
-export async function resolveServices(input,menu,env=process.env,fetchImpl=fetch){
+export async function resolveServices(input,menu,env=process.env,fetchImpl=fetch,capabilities={}){
  const local=matchNamedServices(input.service_concern,menu);
  if(local.length)return {status:'services_resolved',service_labels:local,service_recovery_used:false,service_recovery_action:'local',service_recovery_question:null};
+ // Capability is observed in this browser session, never supplied by the caller/model.
+ if(capabilities.manualConcern===true&&String(input.service_concern||'').trim())return {status:'services_resolved',service_labels:[diagnosisLabel],service_recovery_used:false,service_recovery_action:'manual_description',service_recovery_question:null};
  const completion=[true,'true'].includes(input.completion_fallbacks);
  const closest=completion?closestServiceCategories(input.service_concern,menu):[];
  if(closest.length)return {status:'services_resolved',service_labels:closest,service_recovery_used:false,service_recovery_action:'closest_category',service_recovery_question:null,service_recovery_reason:'Closest available intake categories; preserve the complete requested work in appointment notes.'};

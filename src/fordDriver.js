@@ -2,6 +2,7 @@ import {applyValetAddress,isValet} from './valet.js';
 import { chromium } from 'playwright-core';
 import {accountTypeFor,selectAccountType} from './accountType.js';
 import {resolveServices} from './serviceRecovery.js';
+import {manualConcernAvailable,selectManualConcern} from './manualConcern.js';
 import {allowedTestCaller,bookingStore} from './bookingStore.js';
 import {bookVoiceTest} from './voiceBooking.js';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
@@ -118,12 +119,14 @@ async function newSession(input) {
 async function atCalendar(s,input,decision) {
   const p=s.page;
   s.stage='select_services';
-  const resolution=await resolveServices(input,s.menu);
+  const resolution=await resolveServices(input,s.menu,process.env,fetch,{manualConcern:await manualConcernAvailable(p)});
   s.serviceResolution=resolution;
   if(resolution.status!=='services_resolved')return fail(resolution.status,'Service matching needs a supported next step.',{...resolution,service_menu:s.menu,service_labels:'none',available_slots:[],preferred_time:'none',readback_confirmed:false});
   let labels=resolution.service_labels;
   if(labels.includes('The Works®'))labels=labels.filter(x=>!['Oil Change','Tire Rotation'].includes(x));
-  for(const label of labels){
+  if(resolution.service_recovery_action==='manual_description'){
+    const result=await selectManualConcern(s,input);if(result)return result;
+  }else for(const label of labels){
     if(!s.menu.includes(label)) return fail('service_choice_required','Requested service is not in this vehicle’s menu.',{service_menu:s.menu});
     const checkbox=p.getByRole('checkbox',exact(label));
     if(!await checkbox.isChecked())await checkbox.locator('xpath=ancestor::label[1]').click();

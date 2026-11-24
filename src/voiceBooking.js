@@ -54,6 +54,7 @@ export async function bookVoiceTest(s,input){
    const actual=[input.vehicle_year,input.vehicle_make,input.vehicle_model].join(' ');
    if(!String(s.savedAppointmentNotes||'').includes(actual))return {success:false,status:'actual_vehicle_notes_required'};
  }
+ if(s.manualConcern)input.scheduler_concern=s.verifiedManualConcern;
  record=store.reserve(input); // fsync before final Schedule, even if the browser/network subsequently fails.
  const result=await commitTestBooking(s,{...input,review_token:review.review_token});
  const appointmentId=confirmationFromScreen(result);
