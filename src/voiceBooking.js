@@ -59,6 +59,7 @@ export async function bookVoiceTest(s,input){
  const result=await commitTestBooking(s,{...input,review_token:review.review_token});
  const appointmentId=confirmationFromScreen(result);
  await Promise.allSettled(s.receiptReads||[]);
+ if(s.submissionRequest)store.update(record,{submission_request:s.submissionRequest});
  if(s.receipts?.length)store.update(record,{receipts:s.receipts});
  if(!appointmentId)return {success:false,status:'booking_outcome_unknown',booking_status:'unknown',message:'Do not submit again. This reservation needs verification.'};
  store.update(record,{status:'confirmed',appointment_id:appointmentId});
