@@ -7,7 +7,7 @@ import {createChangeDraftHandler} from './changeDraft.js';
 import {nextSchedulingStep,schedulingDecision} from './schedulingResume.js';
 import {lookupProfile} from './profileLookup.js';
 import {ingestReceipt} from './receiptIntake.js';
-import {registerManagementLink,cancelOperation,cancellationConfirmed} from './cancellation.js';
+import {registerManagementLink,cancelOperation,canReconcileCancellation} from './cancellation.js';
 import {allowedTestCaller,bookingStore,publicRecord} from './bookingStore.js';
 import crypto from 'node:crypto';
 import {dealer,policyDecision,normalizeTransport} from './policy.js';
@@ -45,7 +45,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.url==='/knowledge/search')return send(200,await searchKnowledge(input));
     if(req.url==='/appointment-change/request')return send(200,await handleChangeDraft(input));
     if(req.url==='/receipts/gmail'){if(!allowedTestCaller(input))return send(403,{accepted:false});const store=bookingStore(),record=input.appointment_id?store.byId(input.appointment_id):input.booking_call_id?store.byCall(input.booking_call_id):null;if(!record||record.phone!==String(input.caller_phone).replace(/\D/g,''))return send(404,{accepted:false});return send(200,ingestReceipt(input.email,store,input.appointment_id,input.booking_call_id));}
-    if(req.url==='/appointments/reconcile-cancel'){if(!allowedTestCaller(input))return send(403,{success:false});const store=bookingStore(),r=store.byId(input.appointment_id);if(!r||r.phone!==String(input.caller_phone).replace(/\D/g,'')||r.cancel_status!=='unknown'||!cancellationConfirmed(input.confirmation,r.appointment_id))return send(400,{success:false,status:'confirmation_required'});store.update(r,{status:'cancelled',cancel_status:'cancelled',cancel_verification:'operator-reviewed actual provider confirmation'});return send(200,{success:true,status:'cancelled',...publicRecord(r)});}
+    if(req.url==='/appointments/reconcile-cancel'){if(!allowedTestCaller(input))return send(403,{success:false});const store=bookingStore(),r=store.byId(input.appointment_id);if(!r||r.phone!==String(input.caller_phone).replace(/\D/g,'')||!canReconcileCancellation(r,input.confirmation))return send(400,{success:false,status:'confirmation_required'});store.update(r,{status:'cancelled',cancel_status:'cancelled',cancel_verification:'operator-reviewed actual provider confirmation'});return send(200,{success:true,status:'cancelled',...publicRecord(r)});}
     if(req.url==='/appointments/receipt'){if(!allowedTestCaller(input))return send(200,{success:false,status:'test_phone_required'});const r=bookingStore().byId(input.appointment_id);return send(200,r&&r.phone===String(input.caller_phone).replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'')?{success:true,record:r}:{success:false,status:'appointment_not_found'});}
     if(req.url==='/appointments/link')return send(200,registerManagementLink(input));
     if(['/cancel/review','/cancel','/cancel/state'].includes(req.url))return send(200,await cancelOperation(req.url==='/cancel'?'commit':req.url==='/cancel/state'?'state':'review',input));
