@@ -69,3 +69,8 @@ test('preserving email during another correction does not restart email collecti
  assert.equal(isEmailRecoveryRequest('Please correct my email to test@example.com. Keep everything else the same.'),true);
  assert.equal(isEmailRecoveryRequest('That email is wrong.'),true);
 });
+
+test('submitted appointments bypass the helper and close without verification or another write',async()=>{
+ const result=await recoverPathway({call_id:'submitted-closing',source_node:'booking_confirmed',utterance:'You already asked that',state:{booking_status:'submitted'}},{},()=>{throw Error('The model should not run');});
+ assert.equal(result.recovery_resume_node,'booking_confirmed');assert.equal(result.recovery_question,null);assert.equal(result.recovery_needed,false);
+});
