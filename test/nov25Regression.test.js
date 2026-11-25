@@ -69,3 +69,9 @@ test('list completion survives harmless rewording during unrelated answers',()=>
  assert.equal(serviceCollection({...b,intake_field:'service_additions',last_user_message:"No, that's all."}).service_complete,true);
  assert.equal(serviceCollection({...b,service_concern:'oil change, tire rotation, wipers',last_user_message:"I'll wait. Please change my email."}).service_complete,true);
 });
+test('ordinary no-more-service variations close the list without requiring an exact phrase',()=>{
+ for(const reply of ['No, nothing else.','No, just the oil change, tire rotation, and wipers.','No thanks, that is everything.']){
+  const b={call_id:'nov25-list-'+reply,service_collection_contract:1,service_concern:'oil change, tire rotation, wipers'};serviceCollection(b);
+  assert.equal(serviceCollection({...b,intake_field:'service_additions',last_user_message:reply}).service_complete,true);
+ }
+});
