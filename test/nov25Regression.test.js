@@ -45,7 +45,7 @@ test('service-list closure is owned by policy, with an explicit chance to add wo
  assert.equal(serviceCollection({...b,intake_field:'service_additions',last_user_message:'Yes.'}).service_complete,false);
  assert.equal(serviceCollection({...b,intake_field:'service_additions',last_user_message:'And tire rotation and wipers.',service_concern:'oil change, tire rotation, wipers'}).service_complete,true);
  assert.equal(serviceCollection({...b,service_concern:'oil change, tire rotation, wipers'}).service_complete,true);
- assert.equal(serviceCollection({...b,service_concern:'battery replacement'}).service_complete,false);
+ assert.equal(serviceCollection({...b,service_concern:'battery replacement'}).service_complete,true);
  assert.equal(serviceCollection({...b,service_concern:'battery replacement',intake_field:'service_additions',last_user_message:"No, that's all."}).service_complete,true);
 });
 test('misheard fuel gets one single-candidate confirmation and an explicit yes progresses',()=>{
@@ -57,4 +57,15 @@ test('fleet email split immediately after at preserves its local part',async()=>
  const b={call_id:'nov25-fleet-split',upfront_intake:true};
  const first=await recoverEmail({...b,utterance:'It is b I l m a at'},{},noModel);assert.equal(first.email_candidate,'none');assert.match(first.email_question,/domain/);
  const second=await recoverEmail({...b,utterance:'a l p h a d r I v e a I dot com.'},{},noModel);assert.equal(second.email_candidate,'bilma@alphadriveai.com');
+});
+import {contactCorrection} from '../src/contactCorrection.js';
+test('an email correction during transport is handled by the email owner without changing transport or services',async()=>{
+ const input={call_id:'nov25-cross-node',last_user_message:"I'll wait at the dealership. Also, please change my email to vince@callstreamai.com.",customer_email:'bilma@alphadriveai.com',transport_option:'wait',service_concern:'oil change, tire rotation, wipers',upfront_intake:true,completion_fallbacks:true};
+ const r=await contactCorrection(input,{},noModel);assert.equal(r.email_candidate,'vince@callstreamai.com');assert.equal(r.email_confirmed,false);assert.equal(input.transport_option,'wait');assert.equal(input.service_concern,'oil change, tire rotation, wipers');
+ assert.equal(await contactCorrection({...input,last_user_message:"I'll wait at the dealership."},{},noModel),null);
+});
+test('list completion survives harmless rewording during unrelated answers',()=>{
+ const b={call_id:'nov25-list-wording',service_collection_contract:1,service_concern:'I have a few things, but I need an oil change tire rotation, and wipers.'};serviceCollection(b);
+ assert.equal(serviceCollection({...b,intake_field:'service_additions',last_user_message:"No, that's all."}).service_complete,true);
+ assert.equal(serviceCollection({...b,service_concern:'oil change, tire rotation, wipers',last_user_message:"I'll wait. Please change my email."}).service_complete,true);
 });

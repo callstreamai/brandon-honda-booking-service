@@ -9,7 +9,7 @@ export function serviceCollection(input,now=Date.now()){
  const prior=calls.get(key)||{complete:false,concern:null};
  const concern=hasServiceConcern(input.service_concern)?input.service_concern:null;
  const reply=String(input.last_user_message||'').trim();
- if(concern!==prior.concern)prior.complete=false;
+ if(!concern)prior.complete=false;
  if(input.intake_field==='service_additions'&&reply&&!reply.includes('{{')){
   const noMore=/^(?:no(?:pe)?(?:[, ]+(?:thanks|thank you|that(?:'s| is) (?:all|it)))?|nothing else|that(?:'s| is) (?:all|it))[.!]?$/i.test(reply);
   if(noMore||(concern&&concern!==prior.concern))prior.complete=true;
