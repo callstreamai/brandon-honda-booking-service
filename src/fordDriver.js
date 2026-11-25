@@ -73,6 +73,14 @@ async function newSession(input) {
   const s={browser,context,page,waitForReads:watchReadRequests(page),touched:Date.now(),fingerprint:inputFingerprint(input),vehicleFingerprint:vehicleFingerprint(input),stage:'opening',slots:[],busy:true};
   try {
     s.receipts=[];s.receiptReads=[];
+    page.on('request',request=>{
+      if(!s.writeAttempted||new URL(request.url()).pathname!=='/api/guestxpgateway/appointment/schedule')return;
+      try{
+        const body=request.postDataJSON(),fields=[],references={};
+        const walk=(value,prefix='')=>{if(!value||typeof value!=='object')return;for(const [key,item]of Object.entries(value)){const field=prefix?prefix+'.'+key:key;fields.push(field);if(/^(caseId|reservationId|appointmentId|transactionId)$/i.test(key)&&typeof item==='string'&&/^[a-z0-9-]{6,80}$/i.test(item))references[field]=item;if(item&&typeof item==='object')walk(item,field);}};
+        walk(body);s.submissionRequest={path:'/api/guestxpgateway/appointment/schedule',fields:fields.slice(0,300),references};
+      }catch{}
+    });
     page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({path:new URL(response.url()).pathname,status:response.status(),elapsed_ms:s.writeStartedAt?Date.now()-s.writeStartedAt:null,value});}catch{}})();s.receiptReads.push(task);});
     s.stage='scheduler_open';
     await page.goto(dealer.scheduler,{waitUntil:'domcontentloaded',timeout:30000});
@@ -255,7 +263,7 @@ export async function operate(operation,input) {
       }
       if(!s||s.fingerprint!==inputFingerprint(input)||s.page.isClosed())return fail('fresh_availability_required','The approved booking needs a matching active scheduler session.');
       s.busy=true;s.touched=Date.now();
-      if(operation==='inspect'){const view=await inspectTestBooking(s,{screenshot:input.include_screenshot===true});if(input.include_receipts===true&&allowedTestCaller(input))view.response_receipts=s.receipts||[];return view;}
+      if(operation==='inspect'){const view=await inspectTestBooking(s,{screenshot:input.include_screenshot===true});if(input.include_receipts===true&&allowedTestCaller(input)){view.response_receipts=s.receipts||[];view.submission_request=s.submissionRequest||null;}return view;}
       if(operation==='book')return await commitTestBooking(s,input);
       return await prepareTestReview(s,input);
     }
