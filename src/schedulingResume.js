@@ -28,7 +28,6 @@ export function schedulingDecision(i,policy){
  }
  if(!yes(i.email_confirmed)||(!validEmail(i.customer_email||'')&&!yes(i.email_declined)))return result(business?'business_email':'contact_email');
  if(business&&!validEmail(i.customer_email||''))return result('account_support');
- if(!['Text','Email','Both','None','Phone'].includes(i.confirmation_method))return result('contact_confirmation');
  if(!supplied(i.vehicle_type))return i.intake_field==='vehicle_type'&&supplied(i.last_user_message)?ask('fuel_gas_confirmation','Is it gasoline-only?'):ask('vehicle_type','Is your vehicle gasoline-only, hybrid, diesel, or fully electric?');
  if(!['Gas','Hybrid','Diesel','Electric'].includes(i.vehicle_type))return result('fuel_help');
  if(!supplied(i.vehicle_mileage))return ask('vehicle_mileage','About how many miles are on that vehicle? It is okay if you don’t know.');
@@ -48,6 +47,7 @@ export function schedulingDecision(i,policy){
   if(i.vehicle_operable==='no')return result('pathway_recovery_help');
   if(valetMissing(i))return result('prepare_valet_readback');
  }
+ if(!['Text','Email','Both','None','Phone'].includes(i.confirmation_method))return result('contact_confirmation');
  if(!isServiceDate(i.preferred_date)&&!yes(i.earliest_requested))return result('date_preference');
  return result('availability_check');
 }

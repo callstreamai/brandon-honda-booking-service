@@ -24,6 +24,10 @@ export function validateServiceAdvice(input,menu,result){
 export async function resolveServices(input,menu,env=process.env,fetchImpl=fetch,capabilities={}){
  if(!hasServiceConcern(input.service_concern))return {status:'service_clarification_required',service_recovery_used:false,service_recovery_action:'clarify',service_recovery_question:'What service or concern would you like us to address?'};
  const local=matchNamedServices(input.service_concern,menu);
+ // On this dealer's live scheduler the named check-engine tile targets a
+ // different calendar with no returned slots. The observed General Diagnosis
+ // intake accepts the same symptom and preserves its exact description.
+ if([true,'true'].includes(input.completion_fallbacks)&&capabilities.manualConcern===true&&local.length===1&&local[0]==='CHECK ENGINE LAMP IS ON')return {status:'services_resolved',service_labels:[diagnosisLabel],service_recovery_used:false,service_recovery_action:'manual_description',service_recovery_question:null};
  if(local.length)return {status:'services_resolved',service_labels:local,service_recovery_used:false,service_recovery_action:'local',service_recovery_question:null};
  // Capability is observed in this browser session, never supplied by the caller/model.
  if(capabilities.manualConcern===true&&String(input.service_concern||'').trim())return {status:'services_resolved',service_labels:[diagnosisLabel],service_recovery_used:false,service_recovery_action:'manual_description',service_recovery_question:null};

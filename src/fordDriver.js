@@ -2,6 +2,7 @@ import {applyValetAddress,isValet} from './valet.js';
 import { chromium } from 'playwright-core';
 import {accountTypeFor,selectAccountType} from './accountType.js';
 import {resolveServices} from './serviceRecovery.js';
+import {hasServiceConcern} from './serviceMatch.js';
 import {manualConcernAvailable,selectManualConcern} from './manualConcern.js';
 import {conversationEnded} from './sessionLifecycle.js';
 import {allowedTestCaller,bookingStore} from './bookingStore.js';
@@ -16,6 +17,7 @@ import {isAuthorizedTestBooking,prepareTestReview,inspectTestBooking,commitTestB
 const sessions = new Map();
 const preparations=new Map();
 const vehicleFingerprint=input=>JSON.stringify(['customer_account_type','vehicle_make','vehicle_year','vehicle_model','vehicle_type','vehicle_mileage'].map(k=>input[k]??null));
+const serviceFingerprint=input=>JSON.stringify([vehicleFingerprint(input),String(input.service_concern||'').trim().toLowerCase()]);
 const active = new Set();
 const idleMs = 10 * 60 * 1000;
 const sessionLimit=Math.max(1,Math.min(10,Number(process.env.MAX_BROWSER_SESSIONS)||2));
@@ -71,7 +73,7 @@ async function newSession(input) {
   const s={browser,context,page,waitForReads:watchReadRequests(page),touched:Date.now(),fingerprint:inputFingerprint(input),vehicleFingerprint:vehicleFingerprint(input),stage:'opening',slots:[],busy:true};
   try {
     s.receipts=[];s.receiptReads=[];
-    page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({path:new URL(response.url()).pathname,status:response.status(),value});}catch{}})();s.receiptReads.push(task);});
+    page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({path:new URL(response.url()).pathname,status:response.status(),elapsed_ms:s.writeStartedAt?Date.now()-s.writeStartedAt:null,value});}catch{}})();s.receiptReads.push(task);});
     s.stage='scheduler_open';
     await page.goto(dealer.scheduler,{waitUntil:'domcontentloaded',timeout:30000});
     s.stage='account_selection';s.accountType=await selectAccountType(page,input.customer_account_type);
@@ -114,9 +116,7 @@ async function newSession(input) {
     s.stage='load_services';await page.getByRole('button',exact('Continue')).click();
     await page.getByRole('heading',exact('Selected Services Will Be Added To Your Reservation')).waitFor();
     await page.getByRole('checkbox').first().waitFor({state:'attached'});
-    s.menu=[];
-    const boxes=page.getByRole('checkbox');
-    for(let i=0;i<await boxes.count();i++)s.menu.push((await boxes.nth(i).locator('xpath=ancestor::label[1]').innerText()).trim());
+    s.menu=await page.getByRole('checkbox').evaluateAll(xs=>xs.map(x=>(x.closest('label')?.innerText||'').trim()));
     s.stage='services';return s;
   } catch(cause){
     const e=new Error('Ford read failed');e.stage=s.stage;
@@ -129,7 +129,7 @@ async function newSession(input) {
   } finally {pendingConnections--;}
 }
 
-async function atCalendar(s,input,decision) {
+async function selectServices(s,input) {
   const p=s.page;
   s.stage='select_services';
   const resolution=await resolveServices(input,s.menu,process.env,fetch,{manualConcern:await manualConcernAvailable(p)});
@@ -161,6 +161,13 @@ async function atCalendar(s,input,decision) {
   await p.getByRole('button',exact('Continue')).click();
   s.stage='service_location';
   await p.getByRole('heading',exact('Select a Service Location')).waitFor();
+  s.serviceFingerprint=serviceFingerprint(input);
+  return null;
+}
+
+async function atCalendar(s,input,decision) {
+  const p=s.page;
+  if(s.stage==='services'){const result=await selectServices(s,input);if(result)return result;}
   if(isValet(input)){
     await selectLabeled(p.locator('[id="Pickup and Delivery"]'));
     await p.getByRole('button',exact('Continue')).click();
@@ -213,9 +220,16 @@ export async function operate(operation,input) {
   if(operation!=='close'){const type=accountTypeFor(input);if(!type)return fail('account_type_required','Confirm whether this is an individual or business/fleet reservation.');input={...input,customer_account_type:type};}
   if(!key||key.includes('{{')) return fail('call_id_required','A unique call identifier is required.');
   if(operation==='prepare'&&input.background_prepare===true){
-    if(!preparations.has(key)&&!sessions.has(key)){
-      if(preparations.size>=20)return fail('capacity','All browser preparation slots are busy.');
-      const entry={at:Date.now(),promise:operate('prepare',{...input,background_prepare:false})};preparations.set(key,entry);
+    if(active.has(key)&&!preparations.has(key))return {success:true,status:'preparing'};
+    const ready=sessions.get(key),needsServices=[true,'true'].includes(input.service_complete)&&hasServiceConcern(input.service_concern);
+    if(ready?.vehicleFingerprint===vehicleFingerprint(input)&&(!needsServices&&['services','service_location','calendar'].includes(ready.stage)||needsServices&&ready.serviceFingerprint===serviceFingerprint(input)&&['service_location','calendar'].includes(ready.stage)))return {success:true,status:'prepared'};
+    const target=[vehicleFingerprint(input),[true,'true'].includes(input.service_complete)&&hasServiceConcern(input.service_concern)?serviceFingerprint(input):null].join('|');
+    const prior=preparations.get(key);
+    if(prior?.target!==target){
+      if(!prior&&preparations.size>=20)return fail('capacity','All browser preparation slots are busy.');
+      const entry={target,at:Date.now(),promise:null};
+      entry.promise=(async()=>{if(prior)await prior.promise;return operate('prepare',{...input,background_prepare:false});})();
+      preparations.set(key,entry);
     }
     return {success:true,status:'preparing',service_menu:[],next_step:input.service_concern?'policy_hook':'service_need'};
   }
@@ -245,12 +259,15 @@ export async function operate(operation,input) {
       if(operation==='book')return await commitTestBooking(s,input);
       return await prepareTestReview(s,input);
     }
-    if(s?.stage==='services'&&s.vehicleFingerprint===vehicleFingerprint(input))s.fingerprint=inputFingerprint(input);
+    if(s&&s.vehicleFingerprint===vehicleFingerprint(input)&&(s.stage==='services'||s.stage==='service_location'&&s.serviceFingerprint===serviceFingerprint(input)))s.fingerprint=inputFingerprint(input);
     if(s&&(s.fingerprint!==inputFingerprint(input)||Date.now()-s.touched>idleMs||s.page.isClosed())) {sessions.delete(key);await close(s);s=null;}
     if(!s){s=await newSession(input);if(s.success===false)return s;sessions.set(key,s);}
     s.busy=true;s.touched=Date.now();
-    if(operation==='prepare') return {success:true,status:'services_ready',service_menu:s.menu,verified_account_type:s.accountType,next_step:input.service_concern?'policy_hook':'service_need'};
-    if(s.stage==='services'){const result=await atCalendar(s,input,decision);if(result){if(['service_choice_required','service_clarification_required','service_staff_required'].includes(result.status)){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
+    if(operation==='prepare'){
+      if(s.stage==='services'&&[true,'true'].includes(input.service_complete)&&hasServiceConcern(input.service_concern)){const result=await selectServices(s,input);if(result)return result;}
+      return {success:true,status:s.stage==='service_location'?'service_location_ready':'services_ready',service_menu:s.menu,verified_account_type:s.accountType,next_step:input.service_concern?'policy_hook':'service_need'};
+    }
+    if(['services','service_location'].includes(s.stage)){const result=await atCalendar(s,input,decision);if(result){if(['service_choice_required','service_clarification_required','service_staff_required'].includes(result.status)){s.stage='services';return result;}sessions.delete(key);await close(s);return result;}}
     if(s.stage!=='calendar') return fail('unexpected_screen','The scheduler needs verification.');
     const earliest=input.preferred_date==='earliest'||(!/^\d{4}-\d{2}-\d{2}$/.test(String(input.preferred_date||''))&&[true,'true'].includes(input.earliest_requested));
     let date=earliest?new Intl.DateTimeFormat('en-CA',{timeZone:dealer.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()):input.preferred_date;
@@ -265,20 +282,10 @@ export async function operate(operation,input) {
     const selectedDate=s.page.locator(`[id="${date}"]`);await selectedDate.waitFor({state:'attached'});
     if(!await selectedDate.isChecked())return fail('calendar_unverified','The requested date was not selected.');
     const radios=s.page.getByRole('radio');const slots=[];s.slotDetails=[];
-    // Independent reads on the settled calendar can share one browser round trip window.
-    // Keep all selection/booking actions sequential and preserve displayed slot order.
-    const count=await radios.count(),rows=[];
-    for(let start=0;start<count;start+=8){
-      rows.push(...await Promise.all(Array.from({length:Math.min(8,count-start)},async(_,offset)=>{
-        const r=radios.nth(start+offset);
-        const [enabled,aria,id]=await Promise.all([r.isEnabled(),r.getAttribute('aria-label'),r.getAttribute('id')]);
-        if(!enabled)return null;
-        const label=aria||await r.locator('xpath=ancestor::label[1]').innerText().catch(()=>'');
-        const time=parseTimeLabel(label);
-        return time&&(!isValet(input)||(time.minutes>=480&&time.minutes<=900))?{...time,id}:null;
-      })));
-    }
-    for(const row of rows.filter(Boolean)){slots.push(row.text);s.slotDetails.push(row);}
+    // Read the settled calendar in one remote round trip, as in the working
+    // reference adapter. Selection and booking remain sequential UI actions.
+    const rows=await radios.evaluateAll(xs=>xs.map(r=>({enabled:!r.disabled&&!r.closest('fieldset[disabled]')&&r.getAttribute('aria-disabled')!=='true',label:r.getAttribute('aria-label')||r.closest('label')?.innerText||'',id:r.id})));
+    for(const row of rows){if(!row.enabled)continue;const time=parseTimeLabel(row.label);if(time&&(!isValet(input)||(time.minutes>=480&&time.minutes<=900))){slots.push(time.text);s.slotDetails.push({...time,id:row.id});}}
     if(!slots.length && !await s.page.getByText('No service times available during the selected time period.',{exact:false}).count())return fail('calendar_unverified','The current calendar screen could not be verified.');
     s.slots=[...new Set(slots)];s.date=date;
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
