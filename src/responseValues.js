@@ -6,7 +6,7 @@ const aliases={
  transport_option:{dropoff:'dropoff','drop off':'dropoff','leave it with you':'dropoff','drop the vehicle off':'dropoff',wait:'wait',waiting:'wait',waiter:'wait','wait there':'wait','stay there':'wait',pickup:'pickup','pick up':'pickup','pickup and delivery':'pickup','pick up and delivery':'pickup',valet:'pickup'},
  confirmation_method:{text:'Text',sms:'Text',email:'Email',both:'Both','text and email':'Both',none:'None',neither:'None',phone:'Phone'}
 };
-export function canonicalValue(field,value){const key=String(value??'').trim().toLowerCase().replace(/[-_]/g,' ').replace(/[.!]$/,'').replace(/\s+/g,' ');return aliases[field]?.[key]??null;}
+export function canonicalValue(field,value){let key=String(value??'').trim().toLowerCase().replace(/[-_]/g,' ').replace(/[.!]$/,'').replace(/\s+/g,' ');if(field==='vehicle_type')key=key.replace(/^(?:it(?:'s| is)|my vehicle is|it uses|it takes)\s+/,'');return aliases[field]?.[key]??null;}
 export function normalizeResponseState(state){const out={...state};for(const field of Object.keys(aliases)){const value=canonicalValue(field,state?.[field]);if(value)out[field]=value;}return out;}
 
 // Opt-in scheduling policy approved by the client: an explicitly unknown fuel
@@ -14,6 +14,13 @@ export function normalizeResponseState(state){const out={...state};for(const fie
 export function completionDefaults(state){
  const out=normalizeResponseState(state);
  if(![true,'true'].includes(out.completion_fallbacks))return out;
+ const reply=String(out.last_user_message||'').trim();
+ if(out.intake_field==='vehicle_type'&&reply&&!reply.includes('{{')){
+  const fuel=canonicalValue('vehicle_type',reply);
+  if(fuel)out.vehicle_type=fuel;
+  else if(/^(?:i (?:really )?(?:do not|don't|dont) know|not sure|i(?:'m| am) not sure|no idea)[.!]?$/i.test(reply))out.vehicle_type='unknown';
+ }
+ if(/^wait[!,.]|\b(?:i(?:'m| am) not done|hold on)\b/i.test(reply)&&!/(?:i(?:'ll| will| am going to)|want to) wait\b|wait (?:there|with|at)/i.test(reply))out.transport_option=null;
  const unknown=/^(unknown|not sure|unsure|i (?:do not|don't|dont) know|don't know|dont know)$/i.test(String(out.vehicle_type||'').trim());
  if(unknown){out.vehicle_type='Gas';out.fuel_defaulted=true;}
  else if(out.vehicle_type&&out.vehicle_type!=='Gas')out.fuel_defaulted=false;

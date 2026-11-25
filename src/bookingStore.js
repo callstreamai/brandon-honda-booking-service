@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 export const phoneDigits=x=>String(x||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
-export function allowedTestCaller(input,env=process.env){return env.VOICE_TEST_BOOKING_ENABLED==='true'&&!!env.VOICE_TEST_PHONE&&phoneDigits(input.caller_phone)===phoneDigits(env.VOICE_TEST_PHONE);}
+export function allowedTestCaller(input,env=process.env){const approved=String(env.VOICE_TEST_PHONES||env.VOICE_TEST_PHONE||'').split(',').map(phoneDigits).filter(p=>/^\d{10}$/.test(p));return env.VOICE_TEST_BOOKING_ENABLED==='true'&&approved.includes(phoneDigits(input.caller_phone));}
 export function createBookingStore(file=process.env.BOOKING_STORE_PATH){
  if(!file)throw new Error('durable_store_required');
  fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});

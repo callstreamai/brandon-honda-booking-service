@@ -3,6 +3,7 @@ import { chromium } from 'playwright-core';
 import {accountTypeFor,selectAccountType} from './accountType.js';
 import {resolveServices} from './serviceRecovery.js';
 import {manualConcernAvailable,selectManualConcern} from './manualConcern.js';
+import {conversationEnded} from './sessionLifecycle.js';
 import {allowedTestCaller,bookingStore} from './bookingStore.js';
 import {bookVoiceTest} from './voiceBooking.js';
 import {dealer, policyDecision, inputFingerprint, isServiceDate} from './policy.js';
@@ -28,6 +29,17 @@ async function selectLabeled(input) {
   if(!await input.isChecked())throw new Error('Labeled selection was not applied');
 }
 setInterval(()=>{for(const [key,p]of preparations)if(Date.now()-p.at>idleMs)preparations.delete(key); for(const [key,s] of sessions) if(Date.now()-s.touched>idleMs && !s.busy){sessions.delete(key);void close(s);} },60000).unref();
+let reaping;
+function releaseEndedSessions(){
+ if(reaping)return reaping;
+ reaping=(async()=>{for(const [key,s]of sessions){
+  if(s.busy||active.has(key)||s.bookingStatus==='unknown')continue;
+  if(await conversationEnded(key)&&sessions.get(key)===s&&!s.busy&&!active.has(key)){
+   sessions.delete(key);preparations.delete(key);await close(s);
+  }
+ }})().finally(()=>{reaping=null;});return reaping;
+}
+setInterval(()=>{void releaseEndedSessions();},30000).unref();
 
 async function choose(select, value, settled=false) {
   const escaped=String(value).trim().replace(/[\s-]/g,'').split('').map(c=>c.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('[\\s-]*');
@@ -43,6 +55,7 @@ async function choose(select, value, settled=false) {
 
 async function newSession(input) {
   if(!process.env.BROWSERLESS_API_KEY) return fail('browserless_not_configured','Browserless credential has not been configured.');
+  if(sessions.size+pendingConnections>=sessionLimit)await releaseEndedSessions();
   if(sessions.size+pendingConnections>=sessionLimit) return fail('capacity','All configured browser sessions are busy.');
   pendingConnections++;
   try {
@@ -206,7 +219,7 @@ export async function operate(operation,input) {
     }
     return {success:true,status:'preparing',service_menu:[],next_step:input.service_concern?'policy_hook':'service_need'};
   }
-  if(['availability','close'].includes(operation)&&preparations.has(key)){const entry=preparations.get(key);const result=await entry.promise;preparations.delete(key);if(operation!=='close'&&result.success===false)return result;}
+  if(['availability','close'].includes(operation)&&preparations.has(key)){const entry=preparations.get(key);const result=await entry.promise;preparations.delete(key);if(operation!=='close'&&result.success===false&&result.status!=='capacity')return result;}
   if(operation==='close'){
     if(active.has(key))return fail('session_busy','A scheduler operation is running.');
     const s=sessions.get(key);sessions.delete(key);await close(s);

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import {diagnosisLabel} from './manualConcern.js';
-import {matchNamedServices,closestServiceCategories} from './serviceMatch.js';
+import {matchNamedServices,closestServiceCategories,hasServiceConcern} from './serviceMatch.js';
 const calls=new Map();
 const schema={type:'object',additionalProperties:false,properties:{action:{type:'string',enum:['match','clarify','staff']},labels:{type:'array',items:{type:'string'}},question:{type:['string','null']},reason:{type:'string'}},required:['action','labels','question','reason']};
 const unresolvedSymptoms=text=>/\b(shak\w*|vibrat\w*|pull\w*|noise|noises|leak\w*|overheat\w*|stall\w*|diagnos\w*)\b|check engine|won.t start|no start/i.test(text);
@@ -22,6 +22,7 @@ export function validateServiceAdvice(input,menu,result){
  return staff(result.reason,true);
 }
 export async function resolveServices(input,menu,env=process.env,fetchImpl=fetch,capabilities={}){
+ if(!hasServiceConcern(input.service_concern))return {status:'service_clarification_required',service_recovery_used:false,service_recovery_action:'clarify',service_recovery_question:'What service or concern would you like us to address?'};
  const local=matchNamedServices(input.service_concern,menu);
  if(local.length)return {status:'services_resolved',service_labels:local,service_recovery_used:false,service_recovery_action:'local',service_recovery_question:null};
  // Capability is observed in this browser session, never supplied by the caller/model.

@@ -2,6 +2,7 @@ import {accountTypeFor} from './accountType.js';
 import {isServiceDate,normalizeTransport} from './policy.js';
 import {validEmail} from './emailRecovery.js';
 import {valetMissing} from './valet.js';
+import {hasServiceConcern} from './serviceMatch.js';
 const yes=v=>v===true||v==='true';
 const supplied=v=>v!=null&&!['','none','null','undefined'].includes(String(v).trim().toLowerCase())&&!String(v).includes('{{');
 
@@ -28,10 +29,10 @@ export function schedulingDecision(i,policy){
  if(!yes(i.email_confirmed)||(!validEmail(i.customer_email||'')&&!yes(i.email_declined)))return result(business?'business_email':'contact_email');
  if(business&&!validEmail(i.customer_email||''))return result('account_support');
  if(!['Text','Email','Both','None','Phone'].includes(i.confirmation_method))return result('contact_confirmation');
- if(!supplied(i.vehicle_type))return ask('vehicle_type','Is your vehicle gasoline-only, hybrid, diesel, or fully electric?');
+ if(!supplied(i.vehicle_type))return i.intake_field==='vehicle_type'&&supplied(i.last_user_message)?result('fuel_help'):ask('vehicle_type','Is your vehicle gasoline-only, hybrid, diesel, or fully electric?');
  if(!['Gas','Hybrid','Diesel','Electric'].includes(i.vehicle_type))return result('fuel_help');
  if(!supplied(i.vehicle_mileage))return ask('vehicle_mileage','About how many miles are on that vehicle? It is okay if you don’t know.');
- if(!supplied(i.service_concern))return result('service_need','What service or concern would you like us to address?');
+ if(!hasServiceConcern(i.service_concern))return result('service_need','What service or concern would you like us to address?');
  if(policy.action==='handoff'||policy.action==='decline')return result(null);
  if(policy.action==='clarify'&&['bumper_warranty','parts_arrived'].includes(policy.field))return result('policy_clarify',policy.field==='bumper_warranty'?'Is the vehicle covered by the manufacturer’s bumper-to-bumper warranty?':'Has Parts or Service notified you that the part has arrived?');
  const dropOnly=policy.dropOnly||policy.action==='clarify'&&policy.field==='transport_option'&&/requires drop-off/.test(policy.reason||'');

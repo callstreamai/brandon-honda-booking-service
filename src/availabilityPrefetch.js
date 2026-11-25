@@ -1,6 +1,7 @@
 import {inputFingerprint,policyDecision,isServiceDate} from './policy.js';
 import {readbackFields} from './schedulerChoices.js';
 import {normalizeResponseState} from './responseValues.js';
+import {hasServiceConcern} from './serviceMatch.js';
 const yes=v=>v===true||v==='true';
 export function searchInput(input){
  const out=normalizeResponseState(input);
@@ -12,7 +13,7 @@ export function canPrefetch(input){
  return yes(input.anticipatory_availability)&&input.call_id&&
  !['cancel','reschedule'].includes(input.existing_action)&&
  input.vehicle_mileage!=null&&String(input.vehicle_mileage).trim()!==''&&
- ['vehicle_year','vehicle_make','vehicle_model','vehicle_type','service_concern'].every(k=>input[k])&&
+ ['vehicle_year','vehicle_make','vehicle_model','vehicle_type'].every(k=>input[k])&&hasServiceConcern(input.service_concern)&&
  ['individual','business'].includes(input.customer_account_type)&&
  ['wait','dropoff','pickup'].includes(input.transport_option)&&
  (isServiceDate(input.preferred_date)||yes(input.earliest_requested))&&
