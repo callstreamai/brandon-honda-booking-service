@@ -5,6 +5,12 @@ const sessions=new Map();
 export function validManagementUrl(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password&&((u.hostname==='www.guestxpui.ford.com'&&u.pathname==='/my-reservation'&&!!u.searchParams.get('enc'))||(u.hostname==='r7604913.m.reyrey.net'&&u.pathname==='/service-portal/'&&/^[a-f0-9]{32}$/i.test(u.searchParams.get('token')||'')));}catch{return false;}}
 export function registerManagementLink(input){if(!allowedTestCaller(input)||!validManagementUrl(input.management_url))return {success:false,status:'invalid_management_link'};const store=bookingStore(),r=input.appointment_id?store.byId(input.appointment_id):input.booking_call_id?store.byCall(input.booking_call_id):null;if(!r||r.phone!==phoneDigits(input.caller_phone))return {success:false,status:'appointment_not_found'};store.update(r,{management_url:input.management_url});return {success:true,status:'management_link_saved'};}
 export function cancellationConfirmed(view,id){return /Your reservation has been canceled\./i.test(view.screen_text||'')&&String(view.screen_text).includes(id)||/Your appointment has been cancelled\./i.test(view.screen_text||'')&&view.headings?.some(h=>h.trim()==='Thank You!');}
+export function canReconcileCancellation(record,view){
+ if(!record||!cancellationConfirmed(view||{},record.appointment_id))return false;
+ // An operator may complete the authorized cancellation in the browser when
+ // Ford requires an emailed passcode. Require its exact reservation number.
+ return record.cancel_status==='unknown'||record.status==='confirmed'&&/^\d{6,20}$/.test(String(record.appointment_id))&&new RegExp('\\b'+record.appointment_id+'\\b').test(String(view?.screen_text||''));
+}
 async function snapshot(s,input){const result={success:false,status:s.stage,screen_text:(await s.page.locator('body').innerText()).slice(0,16000),headings:await s.page.locator('h1,h2,h3,h4').allTextContents()};if(input.include_screenshot)result.screenshot_base64=(await s.page.screenshot({fullPage:true})).toString('base64');return result;}
 setInterval(()=>{for(const[key,s]of sessions)if(!s.busy&&Date.now()-s.touched>600000){sessions.delete(key);void s.browser.close().catch(()=>{});}},60000).unref();
 export async function cancelOperation(operation,input){
