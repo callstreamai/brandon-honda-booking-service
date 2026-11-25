@@ -37,7 +37,8 @@ test('session cleanup needs verified completed Lynnwood conversation, never acti
  for(const [data,expected]of [[{pathway_id:'e90854b7-0d4c-418a-81ad-59b1a027c0cc',completed:true},true],[{pathway_id:'e90854b7-0d4c-418a-81ad-59b1a027c0cc',completed:false},false],[{pathway_id:'other',completed:true},false],[{},false]])assert.equal(await conversationEnded(id,env,async()=>({ok:true,status:200,json:async()=>data})),expected);
  assert.equal(await conversationEnded(id,env,async()=>{throw Error('offline');}),false);
 });
-import {serviceCollection} from '../src/serviceCollection.js';
+import {createServiceCollection} from '../src/serviceCollection.js';
+const serviceCollection=createServiceCollection();
 import {schedulingDecision} from '../src/schedulingResume.js';
 test('service-list closure is owned by policy, with an explicit chance to add work',()=>{
  const b={call_id:'nov25-list',service_collection_contract:1,service_concern:'oil change',service_complete:true};
