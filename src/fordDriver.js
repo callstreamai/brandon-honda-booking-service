@@ -290,7 +290,9 @@ export async function operate(operation,input) {
     s.slots=[...new Set(slots)];s.date=date;
     if(earliest&&!s.slots.length&&attempt<4){do{date=nextDay(date);}while(!isServiceDate(date));continue;}
     // The resolved date becomes authoritative for readback and the final booking request.
-    s.fingerprint=inputFingerprint({...input,preferred_date:date});
+    // Match the state returned to Bland. Service preparation may have resolved
+    // caller labels before this availability operation consumed that session.
+    s.fingerprint=inputFingerprint({...input,service_labels:s.selectedServices.join('|'),preferred_date:date});
     return {...readbackFields(input,date),success:true,status:s.slots.length?'availability_found':'no_availability',available_slots:s.slots,preferred_time:[true,'true'].includes(input.completion_fallbacks)?(s.slots.includes(input.preferred_time)?input.preferred_time:s.slots[0]||'none'):undefined,readback_confirmed:false,...([true,'true'].includes(input.completion_fallbacks)?{earliest_requested:false}:{}),preferred_date:date,timezone:dealer.timezone,booking_enabled:false,verified_account_type:s.accountType,verified_vehicle:s.selectedVehicle,scheduler_selection_note:s.selectionNote||'',booking_notes:s.appointmentNotes||input.booking_notes||'',verified_services:s.selectedServices,verified_transport:s.selectedTransport,verified_pickup_address:s.pickupAddress||null,calendar_date_selected:true,searched_dates:searched,service_labels:s.selectedServices.join('|'),service_recovery_used:s.serviceResolution?.service_recovery_used||false,service_recovery_action:s.serviceResolution?.service_recovery_action||'local'};
     }
   } catch(e) {
