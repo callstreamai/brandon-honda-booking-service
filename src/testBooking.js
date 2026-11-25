@@ -114,8 +114,13 @@ export async function commitTestBooking(s,input){
   if(await button.count()!==1||!await button.isEnabled())return {success:false,status:'booking_review_changed'};
   // Set before the click. Neither an HTTP retry nor an uncertain response may click twice.
   s.writeAttempted=true;s.writeStartedAt=Date.now();s.bookingStatus='unknown';s.stage='booking_result_requires_verification';
-  try{await button.click();await s.waitForReads();}catch{}
-  // A first live test must be verified from the actual confirmation and a fresh lookup.
-  // This does not turn a successful HTTP request into a claimed appointment.
+  // Scheduling is a write, not a calendar read. Ford has returned its final
+  // response after 31 seconds; the 15-second generic read timer returned early.
+  // Listen before clicking and await this original request only. Never retry it.
+  const response=s.page.waitForResponse(r=>{
+    const u=new URL(r.url());return u.origin==='https://api.mss.ford.com'&&u.pathname==='/api/guestxpgateway/appointment/schedule'&&r.request().method()==='POST';
+  },{timeout:40000}).then(async r=>{await r.finished();return r;}).catch(()=>null);
+  try{await button.click();}catch{}
+  await response;
   return await inspectTestBooking(s);
 }
