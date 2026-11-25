@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {pathwayRecoveryResult,recoverPathway} from '../src/pathwayRecovery.js';
+import {pathwayRecoveryResult,recoverPathway,isEmailRecoveryRequest} from '../src/pathwayRecovery.js';
 const advice=resume_node=>({resume_node,advice:'Use known information and clarify only the missing detail.',question:null});
 const state={customer_account_type:'individual',customer_name:'Vince Test',caller_phone:'4102790548',customer_email:'test@example.com',email_confirmed:true,vehicle_year:'2026',vehicle_make:'Ford',vehicle_model:'Maverick',vehicle_type:'Gas',service_concern:'oil change',transport_option:'dropoff',preferred_date:'2026-11-19',preferred_time:'8:00 a.m.',sms_consent:false,readback_confirmed:false,pickup_address:'23 Example Street',pickup_access:'Call on arrival',request_notes:'Preserve these notes',change_request_fingerprint:'original'};
 test('every allowed recovery preserves input and never returns customer fields or permissions',()=>{
@@ -21,6 +21,8 @@ test('existing requests stay in their flow and cannot send or bypass renewed rev
  b.state.change_email_status='request_sent';assert.equal(pathwayRecoveryResult(b,advice('existing_request')).recovery_resume_node,'end_change_request_sent');
 });
 test('unknown writes cannot retry and direct write/transfer targets are rejected',()=>{
+ const uncertain=pathwayRecoveryResult({state:{booking_status:'booking_outcome_unknown'}},advice('readback'));
+ assert.match(uncertain.recovery_question,/may already have been created/);assert.match(uncertain.recovery_question,/will not submit it again/);
  assert.equal(pathwayRecoveryResult({state:{booking_status:'booking_timeout_unknown'}},advice('readback')).recovery_resume_node,'pathway_recovery_help');
  assert.equal(pathwayRecoveryResult({state:{booking_status:'booked'}},advice('readback')).recovery_resume_node,'pathway_recovery_help');
  for(const target of ['submit_booking','send_change_request','cancel_commit','dial_service','transfer_advisor'])assert.throws(()=>pathwayRecoveryResult({},advice(target)));
@@ -59,4 +61,11 @@ test('upfront ambiguous answer speaks the helper clarification instead of discar
  const question='Do you mean it uses regular gasoline, or are you unsure?';
  const r=await recoverPathway({call_id:'clarification-owned-once',source_node:'contact_name',upfront_intake:true,utterance:'Let have a guess',state:{...state,vehicle_type:null}},{EXTERNAL_RECOVERY_ENABLED:'true',OPENAI_API_KEY:'fake',OPENAI_MODEL:'fake'},async()=>({ok:true,json:async()=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({resume_node:'contact_name',advice:'Clarify only fuel.',question,interpretations:[]})}]}]})}));
  assert.equal(r.recovery_resume_node,'contact_name');assert.equal(r.recovery_question,question);assert.equal(r.recovery_values.vehicle_type,null);assert.equal(r.recovery_values.vehicle_model,'Maverick');
+});
+
+test('preserving email during another correction does not restart email collection',()=>{
+ assert.equal(isEmailRecoveryRequest('Please change the phone number for this appointment to 410-279-0548. Keep the vehicle, email, services and pickup address the same.'),false);
+ assert.equal(isEmailRecoveryRequest('Change the vehicle to a Focus. Leave my email unchanged.'),false);
+ assert.equal(isEmailRecoveryRequest('Please correct my email to test@example.com. Keep everything else the same.'),true);
+ assert.equal(isEmailRecoveryRequest('That email is wrong.'),true);
 });
