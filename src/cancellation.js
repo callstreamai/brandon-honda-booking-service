@@ -9,7 +9,7 @@ async function snapshot(s,input){const result={success:false,status:s.stage,scre
 setInterval(()=>{for(const[key,s]of sessions)if(!s.busy&&Date.now()-s.touched>600000){sessions.delete(key);void s.browser.close().catch(()=>{});}},60000).unref();
 export async function cancelOperation(operation,input){
  if(!allowedTestCaller(input))return {success:false,status:'test_phone_required'};
- const store=bookingStore(),r=store.byId(input.appointment_id);
+ const store=bookingStore(),r=input.appointment_id?store.byId(input.appointment_id):input.booking_call_id?store.byCall(input.booking_call_id):null;
  if(!r||r.phone!==phoneDigits(input.caller_phone))return {success:false,status:'appointment_not_found'};
  if(r.status==='cancelled')return {success:true,status:'cancelled',...publicRecord(r)};
  if(operation==='state'){const s=sessions.get(input.call_id);return s?await snapshot(s,input):{success:false,status:'cancel_session_missing'};}
@@ -17,7 +17,8 @@ export async function cancelOperation(operation,input){
  if(!r.management_url)return {success:false,status:'management_link_required',message:'The reservation-management link from the confirmation is needed; do not claim cancellation.'};
  let s=sessions.get(input.call_id);if(s?.busy)return {success:false,status:'session_busy'};
  if(!s){if(operation==='commit')return {success:false,status:'cancel_review_required'};if(sessions.size>=2)return {success:false,status:'capacity'};const region=process.env.BROWSERLESS_REGION||'production-sfo.browserless.io';const browser=await chromium.connectOverCDP(`wss://${region}/chromium?token=${encodeURIComponent(process.env.BROWSERLESS_API_KEY)}&timeout=900000`);const context=await browser.newContext({timezoneId:'America/Los_Angeles',viewport:{width:1440,height:1000}}),page=await context.newPage();page.setDefaultTimeout(12000);s={browser,page,wait:watchReadRequests(page),stage:'opening',touched:Date.now(),busy:false,appointment_id:r.appointment_id};sessions.set(input.call_id,s);await page.goto(r.management_url,{waitUntil:'domcontentloaded',timeout:30000});}
- if(s.appointment_id!==r.appointment_id)return {success:false,status:'appointment_mismatch'};
+ if(s.appointment_id!==r.appointment_id||s.recordKey&&s.recordKey!==r.key)return {success:false,status:'appointment_mismatch'};
+ s.recordKey=r.key;
  s.busy=true;s.touched=Date.now();
  try{
   const p=s.page;await s.wait();

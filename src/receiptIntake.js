@@ -23,9 +23,9 @@ export function receiptMatches(record,receipt){
  const compact=x=>String(x).toLowerCase().replace(/[\s.]/g,'');if(!compact(plain).includes(compact(i.preferred_time))&&!(receipt.cancelled&&record.status==='cancelled'))return false;
  return true;
 }
-export function ingestReceipt(email,store=bookingStore(),appointmentId=null){
+export function ingestReceipt(email,store=bookingStore(),appointmentId=null,bookingCallId=null){
  const receipt=parseReceipt(email);if(!receipt)return {accepted:false,reason:'receipt_not_allowed'};
- const candidates=store.all().filter(r=>(appointmentId?r.appointment_id===String(appointmentId):r.status!=='cancelled')&&receiptMatches(r,receipt));
+ const candidates=store.all().filter(r=>(bookingCallId?r.call_id===String(bookingCallId):appointmentId?r.appointment_id===String(appointmentId):r.status!=='cancelled')&&receiptMatches(r,receipt));
  if(candidates.length!==1)return {accepted:false,reason:'receipt_not_uniquely_matched'};
  const record=candidates[0];if((record.receipt_message_ids||[]).includes(receipt.message_id))return {accepted:true,duplicate:true};
  const patch={receipt_message_ids:[...(record.receipt_message_ids||[]),receipt.message_id].slice(-30),last_receipt_at:receipt.received_at};

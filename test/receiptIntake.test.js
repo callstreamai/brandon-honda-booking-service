@@ -7,3 +7,9 @@ test('email cancellation never performs a write or clears an uncertain result',(
 test('Gmail import can corroborate a specifically identified completed reservation',()=>{let patch;const store={all:()=>[{...record,status:'cancelled'}],update:(_,p)=>patch=p};const result=ingestReceipt({...email,subject:'Your reservation has been canceled'},store,'1234567890');assert.equal(result.accepted,true);assert.equal(patch.cancellation_email_received,true);assert.equal(patch.status,undefined);});
 
 test('Ford cancellation email without a time can only corroborate an already cancelled identified record',()=>{const mail={...email,subject:'Your reservation has been canceled',text:email.text.replace(' at 8:00 AM','')};let patch;const store={all:()=>[{...record,status:'cancelled'}],update:(_,p)=>patch=p};assert.equal(ingestReceipt(mail,store,'1234567890').accepted,true);assert.equal(patch.cancellation_email_received,true);assert.equal(ingestReceipt(mail,store).accepted,false);assert.equal(receiptMatches(record,parseReceipt(mail)),false);});
+test('unknown submission is linked by its exact call without inventing a reservation ID or confirming a booking',()=>{
+ const a={...record,status:'unknown',appointment_id:null,call_id:'exact-call'},b={...a,call_id:'other-call'};let changed,patch;
+ const store={all:()=>[a,b],update:(r,p)=>{changed=r;patch=p;}};
+ const result=ingestReceipt(email,store,null,'exact-call');assert.equal(result.accepted,true);assert.equal(changed,a);assert.equal(patch.status,undefined);assert.equal(patch.appointment_id,undefined);assert.equal(result.appointment_id,null);
+ assert.equal(ingestReceipt({...email,text:email.text.replace('Explorer','Bronco')},store,null,'exact-call').accepted,false);
+});
