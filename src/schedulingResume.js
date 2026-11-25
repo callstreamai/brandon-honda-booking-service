@@ -29,10 +29,11 @@ export function schedulingDecision(i,policy){
  if(!yes(i.email_confirmed)||(!validEmail(i.customer_email||'')&&!yes(i.email_declined)))return result(business?'business_email':'contact_email');
  if(business&&!validEmail(i.customer_email||''))return result('account_support');
  if(!['Text','Email','Both','None','Phone'].includes(i.confirmation_method))return result('contact_confirmation');
- if(!supplied(i.vehicle_type))return i.intake_field==='vehicle_type'&&supplied(i.last_user_message)?result('fuel_help'):ask('vehicle_type','Is your vehicle gasoline-only, hybrid, diesel, or fully electric?');
+ if(!supplied(i.vehicle_type))return i.intake_field==='vehicle_type'&&supplied(i.last_user_message)?ask('fuel_gas_confirmation','Is it gasoline-only?'):ask('vehicle_type','Is your vehicle gasoline-only, hybrid, diesel, or fully electric?');
  if(!['Gas','Hybrid','Diesel','Electric'].includes(i.vehicle_type))return result('fuel_help');
  if(!supplied(i.vehicle_mileage))return ask('vehicle_mileage','About how many miles are on that vehicle? It is okay if you don’t know.');
  if(!hasServiceConcern(i.service_concern))return result('service_need','What service or concern would you like us to address?');
+ if(Number(i.service_collection_contract)===1&&!yes(i.service_complete))return result('service_need',i.intake_field==='service_additions'?'What else would you like us to take care of?':'Anything else you would like us to take care of while it’s in?','service_additions');
  if(policy.action==='handoff'||policy.action==='decline')return result(null);
  if(policy.action==='clarify'&&['bumper_warranty','parts_arrived'].includes(policy.field))return result('policy_clarify',policy.field==='bumper_warranty'?'Is the vehicle covered by the manufacturer’s bumper-to-bumper warranty?':'Has Parts or Service notified you that the part has arrived?');
  const dropOnly=policy.dropOnly||policy.action==='clarify'&&policy.field==='transport_option'&&/requires drop-off/.test(policy.reason||'');

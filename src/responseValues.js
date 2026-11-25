@@ -15,9 +15,10 @@ export function completionDefaults(state){
  const out=normalizeResponseState(state);
  if(![true,'true'].includes(out.completion_fallbacks))return out;
  const reply=String(out.last_user_message||'').trim();
- if(out.intake_field==='vehicle_type'&&reply&&!reply.includes('{{')){
+ if(['vehicle_type','fuel_gas_confirmation'].includes(out.intake_field)&&reply&&!reply.includes('{{')){
   const fuel=canonicalValue('vehicle_type',reply);
   if(fuel)out.vehicle_type=fuel;
+  else if(out.intake_field==='fuel_gas_confirmation'&&/^(yes|yeah|yep|correct|right|that's right)[.!]?$/i.test(reply))out.vehicle_type='Gas';
   else if(/^(?:i (?:really )?(?:do not|don't|dont) know|not sure|i(?:'m| am) not sure|no idea)[.!]?$/i.test(reply))out.vehicle_type='unknown';
  }
  if(/^wait[!,.]|\b(?:i(?:'m| am) not done|hold on)\b/i.test(reply)&&!/(?:i(?:'ll| will| am going to)|want to) wait\b|wait (?:there|with|at)/i.test(reply))out.transport_option=null;

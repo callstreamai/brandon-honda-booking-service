@@ -37,3 +37,19 @@ test('session cleanup needs verified completed Lynnwood conversation, never acti
  for(const [data,expected]of [[{pathway_id:'e90854b7-0d4c-418a-81ad-59b1a027c0cc',completed:true},true],[{pathway_id:'e90854b7-0d4c-418a-81ad-59b1a027c0cc',completed:false},false],[{pathway_id:'other',completed:true},false],[{},false]])assert.equal(await conversationEnded(id,env,async()=>({ok:true,status:200,json:async()=>data})),expected);
  assert.equal(await conversationEnded(id,env,async()=>{throw Error('offline');}),false);
 });
+import {serviceCollection} from '../src/serviceCollection.js';
+import {schedulingDecision} from '../src/schedulingResume.js';
+test('service-list closure is owned by policy, with an explicit chance to add work',()=>{
+ const b={call_id:'nov25-list',service_collection_contract:1,service_concern:'oil change',service_complete:true};
+ assert.equal(serviceCollection(b).service_complete,false);
+ assert.equal(serviceCollection({...b,intake_field:'service_additions',last_user_message:'Yes.'}).service_complete,false);
+ assert.equal(serviceCollection({...b,intake_field:'service_additions',last_user_message:'And tire rotation and wipers.',service_concern:'oil change, tire rotation, wipers'}).service_complete,true);
+ assert.equal(serviceCollection({...b,service_concern:'oil change, tire rotation, wipers'}).service_complete,true);
+ assert.equal(serviceCollection({...b,service_concern:'battery replacement'}).service_complete,false);
+ assert.equal(serviceCollection({...b,service_concern:'battery replacement',intake_field:'service_additions',last_user_message:"No, that's all."}).service_complete,true);
+});
+test('misheard fuel gets one single-candidate confirmation and an explicit yes progresses',()=>{
+ const b={customer_account_type:'individual',customer_name:'Isabel Test',caller_phone:'2393822414',caller_phone_confirmed:true,vehicle_year:'2021',vehicle_make:'Ford',vehicle_model:'Bronco',customer_email:'bilma@example.com',email_confirmed:true,confirmation_method:'Both',completion_fallbacks:true,upfront_intake:true};
+ const q=schedulingDecision({...b,intake_field:'vehicle_type',last_user_message:"It's got."},{action:'schedule'});assert.equal(q.next_step,'contact_name');assert.equal(q.intake_field,'fuel_gas_confirmation');assert.equal(q.step_question,'Is it gasoline-only?');
+ const s=completionDefaults({...b,intake_field:q.intake_field,last_user_message:'Yes.'});assert.equal(s.vehicle_type,'Gas');assert.equal(schedulingDecision(s,{action:'schedule'}).intake_field,'vehicle_mileage');
+});
