@@ -6,7 +6,7 @@ const decode=s=>s.replace(/&amp;/gi,'&').replace(/&nbsp;/gi,' ').replace(/&#39;/
 export function parseReceipt(email){
  if(!senders.has(senderAddress(email.from)))return null;
  const html=String(email.html||'');const plain=decode(String(email.text||'')+' '+html.replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').toLowerCase();
- if(!plain.includes('pierre ford of lynnwood')||!plain.includes('rpa test'))return null;
+ if(!plain.includes('pierre ford of lynnwood')||!(/\brpa test\b/.test(plain)||/\brpa te\b/.test(plain)))return null;
  const links=[];for(const match of html.matchAll(/href=["']([^"']+)["']/gi)){
   let value=decode(match[1]);try{const u=new URL(value);if(u.hostname==='mailer.reyrey.net'&&u.pathname==='/Click.ashx')value=u.searchParams.get('url')||'';}catch{continue;}
   if(validManagementUrl(value))links.push(value);
@@ -15,6 +15,13 @@ export function parseReceipt(email){
 }
 export function receiptMatches(record,receipt){
  const i=record.input;const plain=receipt.plain;
+ // Ford's 15-character first-name field truncated the old test suffix for
+ // Isabelle. Accept that legacy receipt only against its exact recorded name.
+ if(!/\brpa test\b/.test(plain)){
+  const words=String(i.customer_name||'').trim().split(/\s+/);const first=words.shift();
+  const legacy=(first+' RPA TEST').slice(0,15)+' '+words.join(' ');
+  if(!/\brpa te$/i.test((first+' RPA TEST').slice(0,15))||!plain.includes(legacy.toLowerCase()))return false;
+ }
  const received=Date.parse(receipt.received_at||'');if(!Number.isFinite(received)||received<Date.parse(record.created_at)-60000)return false;
  const booked=i.scheduler_vehicle||{year:i.vehicle_year,model:i.vehicle_model};
  if(!plain.includes(String(booked.year))||!plain.replace(/[^a-z0-9]/g,'').includes(String(booked.model).toLowerCase().replace(/[^a-z0-9]/g,'')))return false;

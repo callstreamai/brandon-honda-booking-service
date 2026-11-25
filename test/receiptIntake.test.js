@@ -13,3 +13,10 @@ test('unknown submission is linked by its exact call without inventing a reserva
  const result=ingestReceipt(email,store,null,'exact-call');assert.equal(result.accepted,true);assert.equal(changed,a);assert.equal(patch.status,undefined);assert.equal(patch.appointment_id,undefined);assert.equal(result.appointment_id,null);
  assert.equal(ingestReceipt({...email,text:email.text.replace('Explorer','Bronco')},store,null,'exact-call').accepted,false);
 });
+test('legacy truncated fixture marker must match the recorded full test name',()=>{
+ const mail={...email,text:email.text.replace('Vince RPA TEST','Isabelle RPA TE Thautilus')};
+ const r={...record,input:{...record.input,customer_name:'Isabelle Thautilus'}};
+ assert.equal(receiptMatches(r,parseReceipt(mail)),true);
+ assert.equal(receiptMatches({...r,input:{...r.input,customer_name:'Isabelle Other'}},parseReceipt(mail)),false);
+ assert.equal(parseReceipt({...email,text:email.text.replace('RPA TEST','regular customer')}),null);
+});

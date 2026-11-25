@@ -72,7 +72,7 @@ export async function prepareTestReview(s,input){
       if(!/^\S+@\S+\.\S+$/.test(input.customer_email||''))return {success:false,status:'business_email_required'};
       await p.getByLabel('Business Name',{exact:true}).fill(input.business_name+' RPA TEST');
     }else{
-      await p.getByLabel('First Name',{exact:true}).fill(first+' RPA TEST');
+      await p.getByLabel('First Name',{exact:true}).fill('RPA TEST '+first);
       await p.getByLabel('Last Name',{exact:true}).fill(last);
     }
     if(input.customer_email&&input.customer_email!=='none')await p.getByLabel('Email Address',{exact:true}).fill(input.customer_email);
