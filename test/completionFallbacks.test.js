@@ -6,6 +6,18 @@ import {policyDecision} from '../src/policy.js';
 import {resolveServices} from '../src/serviceRecovery.js';
 import {nearestYears,equivalentModel,appointmentNotes,selectionNote} from '../src/schedulerChoices.js';
 const menu=['The Works®','Oil Change','Battery','Brakes','Tire Rotation','Cooling','Filters','Wheel Alignment','Lights','Wipers','Tire Repair/Replace'];
+test('a clear transportation correction replaces stale advisor_help and advances without losing details',()=>{
+ const state={completion_fallbacks:true,upfront_intake:true,customer_account_type:'individual',customer_name:'Casey Test',caller_phone:'2025550123',caller_phone_confirmed:true,vehicle_year:'2021',vehicle_make:'Ford',vehicle_model:'Bronco',vehicle_type:'Gas',vehicle_mileage:'unknown',customer_email:'casey@example.com',email_confirmed:true,service_concern:'oil change, tire rotation, and wipers',service_complete:true,service_collection_contract:1,transport_option:'advisor_help',earliest_requested:true};
+ for(const last_user_message of ["I'll wait at the dealership.","Actually, I will wait there.","I'd like to wait with my car."]){
+  const out=completionDefaults({...state,last_user_message});assert.equal(out.transport_option,'wait');
+  assert.equal(schedulingDecision(out,policyDecision(out)).next_step,'contact_confirmation');
+  for(const key of ['caller_phone','customer_email','vehicle_model','service_concern','service_complete'])assert.equal(out[key],state[key]);
+ }
+ for(const [reply,expected]of [["I'll drop it off.",'dropoff'],['I need pickup and delivery.','pickup']])assert.equal(completionDefaults({...state,last_user_message:reply}).transport_option,expected);
+ for(const reply of ["I'm going away.","I don't want to wait.",'Can I wait at the dealership?'])assert.equal(completionDefaults({...state,last_user_message:reply}).transport_option,'advisor_help');
+ assert.equal(completionDefaults({...state,transport_option:'wait',last_user_message:"Wait! I'm not done. I also need wipers."}).transport_option,null);
+ assert.equal(completionDefaults({...state,completion_fallbacks:false,last_user_message:"I'll wait at the dealership."}).transport_option,'advisor_help');
+});
 test('explicitly unknown fuel advances fleet intake and preserves contact/vehicle corrections',()=>{
  const state={completion_fallbacks:true,upfront_intake:true,customer_account_type:'business',business_name:'Alpha Test',caller_phone:'4102790548',caller_phone_confirmed:true,caller_id:'+12393822414',vehicle_year:'2023',vehicle_make:'Ford',vehicle_model:'F250',vehicle_type:'unknown',vehicle_mileage:'unknown',customer_email:'vince@callstreamai.com',email_confirmed:true,confirmation_method:'Both',service_concern:'alignment'};
  const out=completionDefaults(state);assert.equal(out.vehicle_type,'Gas');assert.equal(out.fuel_defaulted,true);assert.equal(out.caller_phone,'4102790548');assert.equal(out.customer_email,state.customer_email);assert.equal(out.business_name,state.business_name);assert.equal(out.vehicle_model,'F250');assert.equal(schedulingDecision(out,policyDecision(out)).next_step,'transport_option');
