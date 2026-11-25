@@ -53,3 +53,8 @@ test('misheard fuel gets one single-candidate confirmation and an explicit yes p
  const q=schedulingDecision({...b,intake_field:'vehicle_type',last_user_message:"It's got."},{action:'schedule'});assert.equal(q.next_step,'contact_name');assert.equal(q.intake_field,'fuel_gas_confirmation');assert.equal(q.step_question,'Is it gasoline-only?');
  const s=completionDefaults({...b,intake_field:q.intake_field,last_user_message:'Yes.'});assert.equal(s.vehicle_type,'Gas');assert.equal(schedulingDecision(s,{action:'schedule'}).intake_field,'vehicle_mileage');
 });
+test('fleet email split immediately after at preserves its local part',async()=>{
+ const b={call_id:'nov25-fleet-split',upfront_intake:true};
+ const first=await recoverEmail({...b,utterance:'It is b I l m a at'},{},noModel);assert.equal(first.email_candidate,'none');assert.match(first.email_question,/domain/);
+ const second=await recoverEmail({...b,utterance:'a l p h a d r I v e a I dot com.'},{},noModel);assert.equal(second.email_candidate,'bilma@alphadriveai.com');
+});

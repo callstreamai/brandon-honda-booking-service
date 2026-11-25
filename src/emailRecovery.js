@@ -13,7 +13,7 @@ function emailPart(value){
 export function spelledEmail(value){
  const s=unframe(value);
  if(/\b(?:or|maybe|think|not sure|as in)\b/i.test(s))return null;
- const parts=s.split(/\s+at[.,]?\s+|@/i);if(parts.length!==2)return null;
+ const parts=s.split(/\s+at[.,]?(?:\s+|$)|@/i);if(parts.length!==2)return null;
  // Saying a word and then spelling that same word is contextual speech, not
  // two literal copies. Let the existing email helper interpret it.
  const tokens=s.toLowerCase().split(/\s+/);
@@ -47,9 +47,9 @@ export async function recoverEmail(body,env=process.env,fetcher=fetch){
  }
  // Retain a corrected local part while the caller supplies the domain on the next turn.
  // Never recombine the domain with the rejected previous address.
- const parts=unframe(utterance).split(/\s+at[.,]?\s+|@/i);
+ const parts=unframe(utterance).split(/\s+at[.,]?(?:\s+|$)|@/i);
  if(parts.length===2){const local=emailPart(parts[0]);if(local){n.local=local;attempts.set(key,n);const domain=emailPart(parts[1]);if(!/[.]|\bdot\b/i.test(parts[1])||(domain&&!validEmail(local+'@'+domain))){n.awaitingDomain=true;attempts.set(key,n);return result(null,false,'What is the full domain after the at sign, including the ending such as dot com?');}n.awaitingDomain=false;}}
- else if(n.awaitingDomain&&n.local){const domain=emailPart(unframe(utterance));if(domain&&validEmail(n.local+'@'+domain)){n.awaitingDomain=false;return result(n.local+'@'+domain);}return result(null,false,'Please spell the domain after the at sign, including the part after the dot.');}
+ else if(n.local&&(n.awaitingDomain||validEmail('x@'+(emailPart(unframe(utterance))||'')))){const domain=emailPart(unframe(utterance));if(domain&&validEmail(n.local+'@'+domain)){n.awaitingDomain=false;return result(n.local+'@'+domain);}return result(null,false,'Please spell the domain after the at sign, including the part after the dot.');}
  const spelled=spelledEmail(utterance);if(spelled)return result(spelled);
  if(n.lastUtterance===utterance&&n.lastResult)return n.lastResult;
  if(!key||n.n>=6||attempts.size>=500)return result(null,false,'Please spell the part before the at sign, followed by at and the full domain.');
