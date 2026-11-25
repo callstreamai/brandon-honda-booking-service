@@ -54,7 +54,6 @@ export async function bookVoiceTest(s,input){
   if([true,'true'].includes(input.submitted_closing)&&submittedFordError(record.receipts)){store.update(record,{status:'submitted'});return submittedResult(record);}
   return {success:false,status:'booking_outcome_unknown',...publicRecord(record)};
  }
- const active=store.active(input.caller_phone);if(active.length)return {success:false,status:'active_test_booking',appointment:publicRecord(active[0]),message:'There is already an outstanding test reservation. Verify or cancel that record before creating another.'};
  if(!s)return {success:false,status:'fresh_availability_required'};
  if(accountTypeFor(input)!==s.accountType)return {success:false,status:'account_type_mismatch'};
  if(accountTypeFor(input)==='business'&&(!input.business_name||!/^\S+@\S+\.\S+$/.test(input.customer_email||'')))return {success:false,status:'business_details_required'};
