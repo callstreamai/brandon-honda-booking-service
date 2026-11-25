@@ -54,14 +54,23 @@ export function pathwayRecoveryResult(body,result){
  else if(source==='transport_option'&&['dropoff','wait','pickup'].includes(s.transport_option)&&target==='transport_option')target='policy_hook';
  else if(source==='date_preference'&&(!blank(s.preferred_date)||yes(s.earliest_requested))&&target==='date_preference')target='policy_hook';
  // Deliberately no customer fields, permissions, slots, fingerprints, or write-success flags in output.
- return {success:true,recovery_resume_node:target,recovery_advice:result.advice,recovery_question:target===result.resume_node?result.question:null,recovery_needed:false,recovery_status:target==='pathway_recovery_help'?'help_offered':'resume'};
+ const helpSpeech=dangerous(s)?'The scheduler returned an error, but your appointment may already have been created. I will not submit it again. Would you like me to connect you with the service team to verify it?':'I haven’t been able to resolve this step. Would you like the service team to help?';
+ return {success:true,recovery_resume_node:target,recovery_advice:result.advice,recovery_question:target==='pathway_recovery_help'?helpSpeech:target===result.resume_node?result.question:null,recovery_needed:false,recovery_status:target==='pathway_recovery_help'?'help_offered':'resume'};
+}
+export function isEmailRecoveryRequest(utterance){
+ const text=String(utterance||'');
+ // Mentioning a preserved email during a phone/vehicle correction is not a
+ // request to collect email again. Explicit email changes still own the field.
+ const preserved=/\b(?:keep|leave|retain|preserve)\b[^!?]*\bemail\b[^!?]*\b(?:same|unchanged|as is)\b/i.test(text);
+ const explicit=/\b(?:change|correct|update|replace|fix)\s+(?:(?:my|the|that|our)\s+)?email\b|@/i.test(text);
+ return /\bemail\b|@/i.test(text)&&(!preserved||explicit);
 }
 export async function recoverPathway(body,env=process.env,fetcher=fetch){
  if(typeof body.call_id!=='string'||!body.call_id||typeof body.utterance!=='string')throw Error('invalid_input');
  // Reuse the established email owner for explicit contact corrections. This
  // prevents generic recovery from retaining a prior email refusal or claiming
  // to apply characters it never parsed. Existing booking uncertainty still wins.
- if([true,'true'].includes(body.completion_fallbacks)&&!dangerous(body.state||{})&&!['booked','confirmed','booking_confirmed'].includes(body.state?.booking_status)&&/\bemail\b|@/i.test(body.utterance))return {success:true,recovery_status:'resume_email',recovery_resume_node:'email_recovery_helper',recovery_needed:false,email_utterance:body.utterance.slice(0,1400)};
+ if([true,'true'].includes(body.completion_fallbacks)&&!dangerous(body.state||{})&&!['booked','confirmed','booking_confirmed'].includes(body.state?.booking_status)&&isEmailRecoveryRequest(body.utterance))return {success:true,recovery_status:'resume_email',recovery_resume_node:'email_recovery_helper',recovery_needed:false,email_utterance:body.utterance.slice(0,1400)};
  const input={source_node:String(body.source_node||'').slice(0,100),utterance:body.utterance.slice(0,2000),last_question:String(body.last_question||'').slice(0,700),reason:String(body.reason||'').slice(0,500),context:String(body.context||'').slice(0,2200),state:{}};
  for(const k of fields){const v=body.state?.[k];if(v!=null&&!['string','boolean','number'].includes(typeof v))continue;input.state[k]=typeof v==='string'?v.slice(0,1600):v??null;}
  input.state=normalizeResponseState(input.state);
