@@ -11,7 +11,7 @@ const dangerous=s=>/unknown|timeout|unhandled|pending/i.test(String(s.booking_st
 const fields=['customer_account_type','business_name','customer_name','caller_phone','customer_email','email_confirmed','vehicle_year','vehicle_make','vehicle_model','vehicle_type','vehicle_mileage','service_concern','service_labels','service_complete','transport_option','preferred_date','preferred_time','earliest_requested','sms_consent','confirmation_method','pickup_address','pickup_access','vehicle_operable','pickup_address_confirmed','valet_review_fingerprint','existing_action','existing_appointment','appointment_id','requested_change','request_notes','change_email_status','change_request_fingerprint','request_confirmed','request_abandoned','readback_confirmed','booking_status'];
 export function knownFieldResume(source,s){
  s=normalizeResponseState(s);
- if(['cancel','reschedule'].includes(s.existing_action)||dangerous(s)||['booked','booking_confirmed','confirmed'].includes(s.booking_status))return null;
+ if(['cancel','reschedule'].includes(s.existing_action)||dangerous(s)||['booked','booking_confirmed','confirmed','submitted'].includes(s.booking_status))return null;
  const fuel=['Gas','Hybrid','Diesel','Electric'].includes(s.vehicle_type);
  const map={
   contact_name:!blank(s.customer_name)&&String(s.customer_name).trim().split(/\s+/).length>=2?'account_phone':null,
@@ -41,7 +41,7 @@ export function pathwayRecoveryResult(body,result){
  const s=body.state||{},source=body.source_node;let target=result.resume_node;
  if(['booking_confirmed','offer_times','no_availability','readback'].includes(target))target='policy_hook';
  if(dangerous(s))target='pathway_recovery_help';
- else if(['booked','booking_confirmed','confirmed'].includes(s.booking_status))target='pathway_recovery_help';
+ else if(['booked','booking_confirmed','confirmed','submitted'].includes(s.booking_status))target='pathway_recovery_help';
  else if(s.change_email_status==='request_sent'&&['existing_request','prepare_change_request','change_request_readback'].includes(target))target='end_change_request_sent';
  else if(target!=='pathway_recovery_help'&&['cancel','reschedule'].includes(s.existing_action)){
   const required=['customer_account_type','customer_name','caller_phone','vehicle_year','vehicle_make','vehicle_model','existing_appointment','service_concern'];
@@ -67,10 +67,11 @@ export function isEmailRecoveryRequest(utterance){
 }
 export async function recoverPathway(body,env=process.env,fetcher=fetch){
  if(typeof body.call_id!=='string'||!body.call_id||typeof body.utterance!=='string')throw Error('invalid_input');
+ if(body.state?.booking_status==='submitted')return {success:true,recovery_status:'resume',recovery_resume_node:'booking_confirmed',recovery_needed:false,recovery_question:null,recovery_advice:'The appointment was already submitted. Continue the normal closing; do not submit again or start a verification conversation.'};
  // Reuse the established email owner for explicit contact corrections. This
  // prevents generic recovery from retaining a prior email refusal or claiming
  // to apply characters it never parsed. Existing booking uncertainty still wins.
- if([true,'true'].includes(body.completion_fallbacks)&&!dangerous(body.state||{})&&!['booked','confirmed','booking_confirmed'].includes(body.state?.booking_status)&&isEmailRecoveryRequest(body.utterance))return {success:true,recovery_status:'resume_email',recovery_resume_node:'email_recovery_helper',recovery_needed:false,email_utterance:body.utterance.slice(0,1400)};
+ if([true,'true'].includes(body.completion_fallbacks)&&!dangerous(body.state||{})&&!['booked','confirmed','booking_confirmed','submitted'].includes(body.state?.booking_status)&&isEmailRecoveryRequest(body.utterance))return {success:true,recovery_status:'resume_email',recovery_resume_node:'email_recovery_helper',recovery_needed:false,email_utterance:body.utterance.slice(0,1400)};
  const input={source_node:String(body.source_node||'').slice(0,100),utterance:body.utterance.slice(0,2000),last_question:String(body.last_question||'').slice(0,700),reason:String(body.reason||'').slice(0,500),context:String(body.context||'').slice(0,2200),state:{}};
  for(const k of fields){const v=body.state?.[k];if(v!=null&&!['string','boolean','number'].includes(typeof v))continue;input.state[k]=typeof v==='string'?v.slice(0,1600):v??null;}
  input.state=normalizeResponseState(input.state);
