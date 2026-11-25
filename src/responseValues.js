@@ -9,12 +9,24 @@ const aliases={
 export function canonicalValue(field,value){let key=String(value??'').trim().toLowerCase().replace(/[-_]/g,' ').replace(/[.!]$/,'').replace(/\s+/g,' ');if(field==='vehicle_type')key=key.replace(/^(?:it(?:'s| is)|my vehicle is|it uses|it takes)\s+/,'');return aliases[field]?.[key]??null;}
 export function normalizeResponseState(state){const out={...state};for(const field of Object.keys(aliases)){const value=canonicalValue(field,state?.[field]);if(value)out[field]=value;}return out;}
 
+// A clear current transportation choice overrides a stale extraction. Match
+// complete affirmative replies only; service interruptions and negations aren't choices.
+export function explicitTransportReply(value){
+ const s=String(value||'').trim().toLowerCase().replace(/’/g,"'").replace(/[.!?]+$/,'').replace(/^(?:(?:yes|no|actually)[, ]+)+/,'').replace(/\s+/g,' ');
+ if(/^(?:i(?:'ll| will| want to| would like to|'d like to| prefer to)|let me) (?:wait|stay)(?: (?:there|here|at (?:the )?dealership|with (?:the |my )?(?:car|vehicle)))?$/.test(s))return 'wait';
+ if(/^i(?:'ll| will| can| want to| would like to|'d like to| prefer to) drop (?:(?:it|the (?:car|vehicle)) off|off(?: (?:the |my )?(?:car|vehicle))?)$/.test(s))return 'dropoff';
+ if(/^i (?:need|want|would like|prefer) (?:a )?(?:pick[ -]?up(?: and delivery)?|valet)$/.test(s))return 'pickup';
+ return null;
+}
+
 // Opt-in scheduling policy approved by the client: an explicitly unknown fuel
 // answer uses Gas. Missing answers and explicit corrections remain distinct.
 export function completionDefaults(state){
  const out=normalizeResponseState(state);
  if(![true,'true'].includes(out.completion_fallbacks))return out;
  const reply=String(out.last_user_message||'').trim();
+ const transport=explicitTransportReply(reply);
+ if(transport)out.transport_option=transport;
  if(['vehicle_type','fuel_gas_confirmation'].includes(out.intake_field)&&reply&&!reply.includes('{{')){
   const fuel=canonicalValue('vehicle_type',reply);
   if(fuel)out.vehicle_type=fuel;
