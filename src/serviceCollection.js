@@ -11,7 +11,7 @@ export function serviceCollection(input,now=Date.now()){
  const reply=String(input.last_user_message||'').trim();
  if(!concern)prior.complete=false;
  if(input.intake_field==='service_additions'&&reply&&!reply.includes('{{')){
-  const noMore=/^(?:no(?:pe)?(?:[, ]+(?:thanks|thank you|that(?:'s| is) (?:all|it)))?|nothing else|that(?:'s| is) (?:all|it))[.!]?$/i.test(reply);
+  const noMore=/^(?:no(?:pe)?\b|nothing else\b|that(?:'s| is) (?:all|it)\b)/i.test(reply);
   if(noMore||(concern&&concern!==prior.concern))prior.complete=true;
  }
  prior.concern=concern;prior.at=now;calls.set(key,prior);
