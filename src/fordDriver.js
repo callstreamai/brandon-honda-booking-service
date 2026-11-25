@@ -81,7 +81,7 @@ async function newSession(input) {
         walk(body);s.submissionRequest={path:'/api/guestxpgateway/appointment/schedule',fields:fields.slice(0,300),references};
       }catch{}
     });
-    page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({path:new URL(response.url()).pathname,status:response.status(),elapsed_ms:s.writeStartedAt?Date.now()-s.writeStartedAt:null,value});}catch{}})();s.receiptReads.push(task);});
+    page.on('response',response=>{if(!s.writeAttempted||s.receipts.length>=12||!['fetch','xhr'].includes(response.request().resourceType()))return;const task=(async()=>{try{if(!(response.headers()['content-type']||'').includes('json'))return;const value=await response.json();s.receipts.push({origin:new URL(response.url()).origin,method:response.request().method(),path:new URL(response.url()).pathname,status:response.status(),elapsed_ms:s.writeStartedAt?Date.now()-s.writeStartedAt:null,value});}catch{}})();s.receiptReads.push(task);});
     s.stage='scheduler_open';
     await page.goto(dealer.scheduler,{waitUntil:'domcontentloaded',timeout:30000});
     s.stage='account_selection';s.accountType=await selectAccountType(page,input.customer_account_type);
