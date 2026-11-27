@@ -259,9 +259,9 @@ export async function operate(operation,input) {
     if(testOperation){
       if(operation==='book'&&allowedTestCaller(input)){
         const prior=bookingStore().byCall(input.call_id);
-        if(prior||s&&s.fingerprint===inputFingerprint(input)&&!s.page.isClosed()){if(s){s.busy=true;s.touched=Date.now();}return await bookVoiceTest(s,input);}
+        if(prior||s&&!s.page.isClosed()){if(s){s.busy=true;s.touched=Date.now();}return await bookVoiceTest(s,input);}
       }
-      if(!s||s.fingerprint!==inputFingerprint(input)||s.page.isClosed())return fail('fresh_availability_required','The approved booking needs a matching active scheduler session.');
+      if(!s||s.page.isClosed())return fail('scheduler_session_closed','The scheduler session has closed before submission; no appointment was submitted.');
       s.busy=true;s.touched=Date.now();
       if(operation==='inspect'){const view=await inspectTestBooking(s,{screenshot:input.include_screenshot===true});if(input.include_receipts===true&&allowedTestCaller(input)){view.response_receipts=s.receipts||[];view.submission_request=s.submissionRequest||null;}return view;}
       if(operation==='book')return await commitTestBooking(s,input);
