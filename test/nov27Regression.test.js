@@ -42,3 +42,11 @@ test('a full spoken email correction during fuel intake reaches the email owner'
  const r=await contactCorrection({...base,call_id:'nov27-cross-node',intake_field:'vehicle_type',customer_email:'bilmo92@gmail.com',last_user_message:"It's B I L M A nine two at gmail dot com."},{});
  assert.equal(r.customer_email,'bilma92@gmail.com');assert.equal(r.email_helper_status,'accepted');
 });
+
+test('completed email resets clarification budget; framed literal correction still saves immediately',async()=>{
+ const call_id='nov27-budget';
+ for(const utterance of ['fragment','fragment two','fragment three'])await recoverEmail({...base,call_id,utterance},{});
+ await recoverEmail({...base,call_id,utterance:'B I L M A nine two at gmail dot com'},{});
+ const r=await recoverEmail({...base,call_id,previous_email:'bilma92@gmail.com',utterance:'For this test, please change the email to vince@callstreamai.com.'},{});
+ assert.equal(r.customer_email,'vince@callstreamai.com');assert.equal(r.email_helper_status,'accepted');
+});
