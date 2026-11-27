@@ -12,6 +12,8 @@ export function schedulingDecision(i,policy){
  const result=(next_step,step_question='',intake_field='')=>({next_step,step_question,intake_field});
  const ask=(field,question)=>result('contact_name',question,field);
  const business=accountTypeFor(i)==='business';
+ if(Number(i.contact_contract_version)>=3&&normalizeTransport(i.transport_option)==='pickup')return result('dial_service');
+ if(Number(i.contact_contract_version)>=3&&yes(i.email_declined))return result('account_support');
  if(!accountTypeFor(i))return result('account_type');
  if(business&&!supplied(i.business_name))return ask('business_name','What business or fleet name should the appointment be under?');
  if(!business&&!supplied(i.customer_name))return ask('customer_name','May I have your first and last name?');
@@ -36,7 +38,7 @@ export function schedulingDecision(i,policy){
  if(policy.action==='handoff'||policy.action==='decline')return result(null);
  if(policy.action==='clarify'&&['bumper_warranty','parts_arrived'].includes(policy.field))return result('policy_clarify',policy.field==='bumper_warranty'?'Is the vehicle covered by the manufacturer’s bumper-to-bumper warranty?':'Has Parts or Service notified you that the part has arrived?');
  const dropOnly=policy.dropOnly||policy.action==='clarify'&&policy.field==='transport_option'&&/requires drop-off/.test(policy.reason||'');
- const pickupEligible=/^(ford|lincoln)$/i.test(i.vehicle_make||'');
+ const pickupEligible=Number(i.contact_contract_version)<3&&/^(ford|lincoln)$/i.test(i.vehicle_make||'');
  const transport=normalizeTransport(i.transport_option);
  if(!['wait','dropoff','pickup'].includes(transport)||policy.action==='clarify'&&policy.field==='transport_option')return result('transport_option',dropOnly?(pickupEligible?'For this service, would you prefer drop-off or pickup and delivery?':'This service requires drop-off. Would that work for you?'):(pickupEligible?'Would you prefer to wait, drop off, or use pickup and delivery?':'Would you prefer to wait or drop off?'));
  if(transport==='pickup'){
