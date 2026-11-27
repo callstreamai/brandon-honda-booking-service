@@ -64,7 +64,7 @@ test('an incomplete alternate phone is not overwritten by ANI or allowed past co
   assert.equal(i.caller_phone,caller_phone);assert.equal(i.caller_phone_confirmed,false);
   const next=schedulingDecision(i,policyDecision(i));assert.equal(next.intake_field,'caller_phone');assert.match(next.step_question,/remaining digits/);
  }
- const i=completionDefaults({...common,caller_phone:'239-382-2414'});
+ const i=completionDefaults({...common,caller_phone_confirmed:false,caller_phone:'239-382-2414',last_user_message:'2414.'});
  assert.equal(i.caller_phone,'2393822414');assert.equal(i.caller_phone_confirmed,true);
  assert.equal(schedulingDecision(i,policyDecision(i)).intake_field,'vehicle_identity');
 });
