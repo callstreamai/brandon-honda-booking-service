@@ -42,7 +42,11 @@ export function completionDefaults(state){
   // An incomplete alternate number is caller input, not missing ANI. Retain
   // its digits so the next turn can finish it instead of restoring caller ID.
   const phone=digits(out.caller_phone);
-  if(phone){out.caller_phone=phone;if(phone.length!==10)out.caller_phone_confirmed=false;}
+  if(phone){
+   out.caller_phone=phone;
+   if(phone.length!==10)out.caller_phone_confirmed=false;
+   else if(out.intake_field==='caller_phone'&&!reply.includes('BEGIN AUTO-GENERATED-CONTENT')&&digits(reply)&&phone.endsWith(digits(reply)))out.caller_phone_confirmed=true;
+  }
   else if(/^\d{10}$/.test(digits(out.caller_id)))out.caller_phone=digits(out.caller_id);
  }else if(!/^\d{10}$/.test(digits(out.caller_phone))&&/^\d{10}$/.test(digits(out.caller_id)))out.caller_phone=digits(out.caller_id);
  return out;
