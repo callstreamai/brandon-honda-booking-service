@@ -1,4 +1,5 @@
 import {contactCorrection} from '../src/contactCorrection.js';
+import {completionDefaults} from '../src/responseValues.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {recoverEmail} from '../src/emailRecovery.js';
@@ -54,4 +55,16 @@ test('completed email resets clarification budget; framed literal correction sti
 test('email tool output is not mistaken for a failed answer to the fuel question',()=>{
  const i={...base,customer_account_type:'individual',customer_name:'Vince Test',caller_phone:'4102790548',caller_phone_confirmed:true,vehicle_year:'2021',vehicle_make:'Ford',vehicle_model:'Bronco',customer_email:'vince@example.com',email_confirmed:true,intake_field:'vehicle_type',last_user_message:'<<< BEGIN AUTO-GENERATED-CONTENT >>> email accepted'};
  assert.equal(schedulingDecision(i,policyDecision(i)).intake_field,'vehicle_type');
+});
+
+test('an incomplete alternate phone is not overwritten by ANI or allowed past collection',()=>{
+ const common={...base,customer_account_type:'individual',customer_name:'Vince Test',caller_id:'+14102790548',caller_phone_confirmed:true,intake_field:'caller_phone'};
+ for(const caller_phone of ['239','239382']){
+  const i=completionDefaults({...common,caller_phone});
+  assert.equal(i.caller_phone,caller_phone);assert.equal(i.caller_phone_confirmed,false);
+  const next=schedulingDecision(i,policyDecision(i));assert.equal(next.intake_field,'caller_phone');assert.match(next.step_question,/remaining digits/);
+ }
+ const i=completionDefaults({...common,caller_phone:'239-382-2414'});
+ assert.equal(i.caller_phone,'2393822414');assert.equal(i.caller_phone_confirmed,true);
+ assert.equal(schedulingDecision(i,policyDecision(i)).intake_field,'vehicle_identity');
 });
