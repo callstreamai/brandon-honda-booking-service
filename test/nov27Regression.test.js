@@ -50,3 +50,8 @@ test('completed email resets clarification budget; framed literal correction sti
  const r=await recoverEmail({...base,call_id,previous_email:'bilma92@gmail.com',utterance:'For this test, please change the email to vince@callstreamai.com.'},{});
  assert.equal(r.customer_email,'vince@callstreamai.com');assert.equal(r.email_helper_status,'accepted');
 });
+
+test('email tool output is not mistaken for a failed answer to the fuel question',()=>{
+ const i={...base,customer_account_type:'individual',customer_name:'Vince Test',caller_phone:'4102790548',caller_phone_confirmed:true,vehicle_year:'2021',vehicle_make:'Ford',vehicle_model:'Bronco',customer_email:'vince@example.com',email_confirmed:true,intake_field:'vehicle_type',last_user_message:'<<< BEGIN AUTO-GENERATED-CONTENT >>> email accepted'};
+ assert.equal(schedulingDecision(i,policyDecision(i)).intake_field,'vehicle_type');
+});
