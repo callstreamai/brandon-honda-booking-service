@@ -18,6 +18,7 @@ export function normalizeTransport(value) {
 export function policyDecision(input) {
   const text = `${input.service_concern || ''} ${input.service_free_text || ''} ${input.initial_request || ''}`.toLowerCase();
   const transport = normalizeTransport(input.transport_option);
+  if(Number(input.contact_contract_version)>=3&&transport==='pickup')return {action:'handoff',target:'service',reason:'Service arranges all pickup, delivery and valet requests.'};
   if (/recall/.test(text)) return {action:'handoff', target:'service', reason:'Collect the known recall description; service must verify remedy and parts.'};
   if (/\bwe[ -]?owe\b|sales promised/.test(text)) return {action:'handoff', target:'sales', reason:'We Owes go to Sales.'};
   if (/mobile service/.test(text+' '+transport)) return {action:'handoff', target:'mc', reason:'Mobile service is arranged by MC.'};
