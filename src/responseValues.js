@@ -38,6 +38,12 @@ export function completionDefaults(state){
  if(unknown){out.vehicle_type='Gas';out.fuel_defaulted=true;}
  else if(out.vehicle_type&&out.vehicle_type!=='Gas')out.fuel_defaulted=false;
  const digits=v=>String(v||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
- if(!/^\d{10}$/.test(digits(out.caller_phone))&&/^\d{10}$/.test(digits(out.caller_id)))out.caller_phone=digits(out.caller_id);
+ if(Number(out.contact_contract_version)>=3){
+  // An incomplete alternate number is caller input, not missing ANI. Retain
+  // its digits so the next turn can finish it instead of restoring caller ID.
+  const phone=digits(out.caller_phone);
+  if(phone){out.caller_phone=phone;if(phone.length!==10)out.caller_phone_confirmed=false;}
+  else if(/^\d{10}$/.test(digits(out.caller_id)))out.caller_phone=digits(out.caller_id);
+ }else if(!/^\d{10}$/.test(digits(out.caller_phone))&&/^\d{10}$/.test(digits(out.caller_id)))out.caller_phone=digits(out.caller_id);
  return out;
 }
