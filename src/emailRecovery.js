@@ -6,7 +6,7 @@ const unframe=value=>String(value||'').trim().replace(/^(?:no[,.]?\s*)?(?:(?:it(
 function emailPart(value){
  const text=value.toLowerCase().replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine)\b/g,x=>digits[x]).replace(/\bdot\b/g,'.').replace(/\bdash\b/g,'-').replace(/\bunderscore\b/g,'_').replace(/\bplus\b/g,'+').replace(/\b([a-z0-9])[,.](?=\s+[a-z0-9](?:\b|\s))/g,'$1').replace(/,/g,' ').trim().replace(/[.!?]+$/,'');
  const chunks=text.split(/[.\-_+]/);
- if(!chunks.every(chunk=>{const t=chunk.trim().split(/\s+/);return t.every(x=>/^[a-z0-9]+$/.test(x))&&(t.length===1||t.every(x=>x.length===1||/^\d+$/.test(x)));}))return null;
+ if(!chunks.every(chunk=>{const t=chunk.trim().split(/\s+/);return t.every(x=>/^[a-z0-9]+$/.test(x))&&(t.length===1||t.every(x=>x.length===1||/^\d+$/.test(x))||/^[a-z]+$/.test(t[0])&&t.slice(1).every(x=>/^\d+$/.test(x)));}))return null;
  return text.replace(/\s+/g,'');
 }
 // Parse explicit spelling only. Never autocorrect a domain or guess letters.
@@ -73,8 +73,8 @@ export async function recoverEmail(body,env=process.env,fetcher=fetch){
  else if(n.local&&(n.awaitingDomain||validEmail('x@'+(emailPart(unframe(utterance))||'')))){const domain=emailPart(unframe(utterance));if(domain&&validEmail(n.local+'@'+domain)){n.awaitingDomain=false;return result(n.local+'@'+domain);}if(!streamlined)return result(null,false,'Please spell the domain after the at sign, including the part after the dot.');}
  const spelled=spelledEmail(utterance);if(spelled)return result(spelled);
  if(n.lastUtterance===utterance&&n.lastResult)return n.lastResult;
- if(streamlined&&(n.turns||0)>=4)return {...result(null),email_helper_status:'required_unavailable'};
- if(!key||n.n>=(streamlined?3:6)||attempts.size>=500)return streamlined?{...result(null),email_helper_status:'required_unavailable'}:result(null,false,'Please spell the part before the at sign, followed by at and the full domain.');
+ if(streamlined&&(n.turns||0)>=4)return {...result(null,false,'The online scheduler needs an email address. Would you like me to connect you with Service for help?'),email_helper_status:'required_unavailable'};
+ if(!key||n.n>=(streamlined?3:6)||attempts.size>=500)return streamlined?{...result(null,false,'The online scheduler needs an email address. Would you like me to connect you with Service for help?'),email_helper_status:'required_unavailable'}:result(null,false,'Please spell the part before the at sign, followed by at and the full domain.');
  if(env.EXTERNAL_RECOVERY_ENABLED!=='true'||!env.OPENAI_API_KEY||!env.OPENAI_MODEL)return result(null);
  n.n++;n.at=now;attempts.set(key,n);
  let timer;const controller=new AbortController();
@@ -83,5 +83,5 @@ export async function recoverEmail(body,env=process.env,fetcher=fetch){
   if(response.status!=='completed')throw Error('incomplete');const text=response.output.filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');const parsed=JSON.parse(text);
   if(streamlined&&validEmail(parsed.candidate)){const [local,domain]=parsed.candidate.split('@');n.local=local;n.domain=domain;n.turns=0;}
   n.lastUtterance=utterance;n.lastResult=result(validEmail(parsed.candidate)?parsed.candidate:null,true,typeof parsed.question==='string'?parsed.question.slice(0,200):undefined);if(streamlined&&!validEmail(parsed.candidate)&&n.n>=3)n.lastResult.email_helper_status='required_unavailable';return n.lastResult;
- }catch{return result(null,false,'Please spell the part before the at sign, followed by at and the full domain.');}finally{clearTimeout(timer);}
+ }catch(e){return {...result(null,false,streamlined&&n.domain?'What comes before the at sign?':streamlined&&n.local?'What is the domain after the at sign?':'What is the email address, including the at sign and domain?'),email_model_error:e.message==='timeout'?'timeout':e.message==='incomplete'?'incomplete':'unavailable'};}finally{clearTimeout(timer);}
 }
