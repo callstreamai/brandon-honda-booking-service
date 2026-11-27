@@ -1,3 +1,4 @@
+import {contactCorrection} from '../src/contactCorrection.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {recoverEmail} from '../src/emailRecovery.js';
@@ -29,4 +30,15 @@ test('pickup, delivery and valet route to Service before customer collection',()
 test('onsite transportation prompt no longer offers online pickup or valet',()=>{
  const i={...base,customer_account_type:'individual',customer_name:'Vince Test',caller_phone:'4102790548',caller_phone_confirmed:true,vehicle_year:'2021',vehicle_make:'Ford',vehicle_model:'Bronco',vehicle_type:'Gas',vehicle_mileage:'25000',customer_email:'vince@example.com',email_confirmed:true,service_concern:'oil change',service_complete:true};
  const r=schedulingDecision(i,policyDecision(i));assert.equal(r.next_step,'transport_option');assert.equal(r.step_question,'Would you prefer to wait or drop off?');
+});
+
+test('actual Nov27 local-part words reuse the already supplied Gmail domain',async()=>{
+ await recoverEmail({...base,call_id:'nov27-domain-first',utterance:'gmail.com.'},{});
+ const r=await recoverEmail({...base,call_id:'nov27-domain-first',utterance:'Bilma nine two at Gmail'},{});
+ assert.equal(r.customer_email,'bilma92@gmail.com');assert.equal(r.email_helper_status,'accepted');
+});
+
+test('a full spoken email correction during fuel intake reaches the email owner',async()=>{
+ const r=await contactCorrection({...base,call_id:'nov27-cross-node',intake_field:'vehicle_type',customer_email:'bilmo92@gmail.com',last_user_message:"It's B I L M A nine two at gmail dot com."},{});
+ assert.equal(r.customer_email,'bilma92@gmail.com');assert.equal(r.email_helper_status,'accepted');
 });
